@@ -71,8 +71,22 @@ function reportsSessionFile(manager: PiRpcManager, sessionPath: string, sessionI
 }
 
 /** Initialize a manager and guarantee its watchers are stopped afterward. */
-async function withManager(fn: (mgr: WorkspaceManager) => Promise<void>): Promise<void> {
-  const mgr = new WorkspaceManager()
+/**
+ * Cap used by the eviction tests.
+ *
+ * Deliberately NOT MAX_LIVE_SESSION_RUNTIMES. Production runs with a cap of
+ * one, but "evict the least recently used idle runtime, sparing the active,
+ * starting and mid-turn ones" needs several runtimes coexisting before the
+ * ordering is even observable. Pinning a roomier cap here keeps these cases
+ * testing the policy rather than the number.
+ */
+const EVICTION_TEST_CAP = 6
+
+async function withManager(
+  fn: (mgr: WorkspaceManager) => Promise<void>,
+  maxLiveRuntimes?: number
+): Promise<void> {
+  const mgr = new WorkspaceManager(maxLiveRuntimes)
   await mgr.initialize()
   try {
     await fn(mgr)
@@ -543,10 +557,10 @@ test('caps live Pi processes by stopping the least recently used idle runtime', 
     const oldestProcess = fakePiProcess(oldestManager, 9000)
 
     const opened = []
-    for (let index = 1; index < MAX_LIVE_SESSION_RUNTIMES; index++) {
+    for (let index = 1; index < EVICTION_TEST_CAP; index++) {
       opened.push(await liveRuntime(mgr, workspace.id, 9000 + index))
     }
-    assert.equal(liveRuntimeCount(mgr), MAX_LIVE_SESSION_RUNTIMES, 'the cap is reached but not breached')
+    assert.equal(liveRuntimeCount(mgr), EVICTION_TEST_CAP, 'the cap is reached but not breached')
 
     const seen: SessionRuntimeInfo[] = []
     mgr.onSessionRuntime((runtime) => seen.push(runtime))
@@ -560,7 +574,7 @@ test('caps live Pi processes by stopping the least recently used idle runtime', 
       0,
       'exactly one runtime is evicted, not every idle one'
     )
-    assert.equal(liveRuntimeCount(mgr), MAX_LIVE_SESSION_RUNTIMES, 'the new process fits inside the cap')
+    assert.equal(liveRuntimeCount(mgr), EVICTION_TEST_CAP, 'the new process fits inside the cap')
 
     // The tab survives; only the process is gone, and the renderer is told.
     const evicted = mgr.getSessionRuntime(oldest.runtimeId)
@@ -579,8 +593,8 @@ test('caps live Pi processes by stopping the least recently used idle runtime', 
     assert.equal(oldestProcess.starts, 1, 'a fresh Pi process is started for the same session file')
     assert.equal(opened[0].process.stopped, true, 'the next least recently used runtime makes room')
     assert.equal(extra.process.stopped, false, 'a runtime used a moment ago is not the eviction target')
-    assert.equal(liveRuntimeCount(mgr), MAX_LIVE_SESSION_RUNTIMES)
-  })
+    assert.equal(liveRuntimeCount(mgr), EVICTION_TEST_CAP)
+  }, EVICTION_TEST_CAP)
 })
 
 test('eviction spares the active, starting, and mid-turn runtimes', async () => {
@@ -617,7 +631,68 @@ test('eviction spares the active, starting, and mid-turn runtimes', async () => 
       false,
       'no unevictable runtime may be killed to honour the cap'
     )
-    assert.equal(liveRuntimeCount(mgr), MAX_LIVE_SESSION_RUNTIMES + 1)
+    assert.equal(liveRuntimeCount(mgr), EVICTION_TEST_CAP + 1)
+  }, EVICTION_TEST_CAP)
+})
+
+test('at the shipping cap of one, moving to another project hands the engine over', async () => {
+  await freshDataDir()
+
+  // No injected cap: this is the production configuration, and the behaviour it
+  // produces is the whole point of MAX_LIVE_SESSION_RUNTIMES = 1. Asserted
+  // rather than assumed, so raising the constant fails here instead of quietly
+  // turning this test into one that proves nothing.
+  assert.equal(MAX_LIVE_SESSION_RUNTIMES, 1, 'this test describes the shipping cap of one')
+
+  await withManager(async (mgr) => {
+    const alpha = await mgr.createWorkspace('Alpha', await project())
+    const beta = await mgr.createWorkspace('Beta', await project())
+
+    await mgr.setActiveWorkspace(alpha.id)
+    const first = await liveRuntime(mgr, alpha.id, 9300)
+    assert.equal(liveRuntimeCount(mgr), 1)
+
+    // Selecting another project is navigation: it must not spawn anything, and
+    // it is what makes the outgoing runtime evictable, since the active one is
+    // never a candidate.
+    await mgr.setActiveWorkspace(beta.id)
+    assert.equal(first.process.stopped, false, 'navigation alone must not stop an engine')
+    assert.equal(liveRuntimeCount(mgr), 1)
+
+    // Sending in the new project is what spawns, and the idle engine goes.
+    const second = await liveRuntime(mgr, beta.id, 9301)
+
+    assert.equal(first.process.stopped, true, 'the idle engine is handed over, not left running')
+    assert.equal(second.process.stopped, false)
+    assert.equal(liveRuntimeCount(mgr), 1, 'exactly one engine is ever live')
+
+    // The handover costs the tab nothing: it stays open and restarts on demand.
+    const evicted = mgr.getSessionRuntime(first.runtime.runtimeId)
+    assert.equal(evicted?.status, 'stopped')
+    assert.equal(evicted?.closed, undefined, 'a handover stops a tab, it does not close it')
+  })
+})
+
+test('a mid-turn runtime survives the cap of one rather than losing its turn', async () => {
+  await freshDataDir()
+
+  await withManager(async (mgr) => {
+    const alpha = await mgr.createWorkspace('Alpha', await project())
+    const beta = await mgr.createWorkspace('Beta', await project())
+
+    await mgr.setActiveWorkspace(alpha.id)
+    const working = await liveRuntime(mgr, alpha.id, 9400)
+    mgr.setSessionRuntimeActivity(working.runtime.runtimeId, 'working')
+
+    await mgr.setActiveWorkspace(beta.id)
+    const incoming = await liveRuntime(mgr, beta.id, 9401)
+
+    // The cap is exceeded on purpose here. Killing a turn the user is waiting
+    // on would be worse, so the renderer asks first instead — this asserts the
+    // main process never silently makes that choice.
+    assert.equal(working.process.stopped, false, 'a mid-turn engine is never evicted for the cap')
+    assert.equal(incoming.process.stopped, false)
+    assert.equal(liveRuntimeCount(mgr), 2, 'the cap yields to an in-flight turn')
   })
 })
 

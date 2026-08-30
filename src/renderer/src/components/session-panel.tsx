@@ -123,7 +123,7 @@ export function SessionPanel(): React.JSX.Element {
             <FolderOpen size={20} className="text-muted" />
             <h1 className="text-lg font-semibold text-primary">Sessions</h1>
             <span className="rounded-full bg-card px-2 py-0.5 text-xs text-dim">
-              {totalSessions} sessions · {totalProjects} projects
+              {totalSessions} chats · {totalProjects} folders
             </span>
           </div>
           <div className="flex gap-2">

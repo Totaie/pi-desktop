@@ -16,7 +16,8 @@ import { NotePicker } from './components/note-picker'
 import { CommandPalette } from './components/command-palette'
 import { ExtensionUiDialog, AppConfirmDialog } from './components/extension-ui-dialog'
 import { ReviewRail } from './components/review-rail'
-import { WorkspaceTabs } from './components/workspace-tabs'
+import { ChatTabs } from './components/chat-tabs'
+import { RemotePanel } from './components/remote-panel'
 import { WorkflowNavigator } from './components/workflow-navigator'
 import { useContextMenu, buildDefaultContextMenu } from './components/context-menu'
 import { usePiEvents, useMenuActions, useInitialize, useNotePickerShortcut } from './hooks'
@@ -148,7 +149,7 @@ export function App(): React.JSX.Element {
         {sidebarOpen && showChrome && <Sidebar />}
 
         <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-          {showChrome && <WorkspaceTabs />}
+          {showChrome && <ChatTabs />}
           <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
             <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
               <div className={globalWorkflowOpen ? 'hidden' : 'contents'}>
@@ -177,6 +178,7 @@ export function App(): React.JSX.Element {
 
       {showChrome && <StatusBar />}
       {showChrome && !globalWorkflowOpen && <WorkflowNavigator />}
+      <RemotePanel />
       <ExtensionUiDialog />
       <AppConfirmDialog />
       <NotePicker />

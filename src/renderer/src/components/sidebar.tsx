@@ -40,6 +40,17 @@ import type { SessionListItem } from '../../../shared/ipc-contracts'
 /** Views reachable from the sidebar's Tools group. */
 type ToolView = 'packages' | 'notes' | 'skills' | 'diagnostics' | 'settings'
 
+/**
+ * Folder name for a workspace.
+ *
+ * Deliberately the path basename rather than `workspace.name`: the given name
+ * is a leftover of the project layer, and two chats in the same folder should
+ * read as the same place regardless of what that project was once called.
+ */
+function directoryLabel(workspace: { name: string; path: string }): string {
+  return workspace.path.split(/[\\/]/).filter(Boolean).pop() || workspace.name
+}
+
 /** Cap how many workspace groups appear in the Recent list. */
 const MAX_RECENT_GROUPS = 12
 /** Cap sessions shown inside an expanded workspace group. */
@@ -523,15 +534,19 @@ export function Sidebar(): React.JSX.Element {
               active={currentView === 'chat'}
               onClick={() => setCurrentView('chat')}
             />
+            {/* No "Sessions" entry: every open chat is already a tab, and the
+                full history is one click away under "Recent chats → View all".
+                A third place to reach the same conversations was the navigation
+                layer this fork exists to remove. */}
             <SidebarItem
               icon={<FolderOpen size={14} />}
-              label="Sessions"
+              label="All chats"
               active={currentView === 'sessions'}
               onClick={() => {
-                setSessionsScope('current')
+                setSessionsScope('all')
                 setCurrentView('sessions')
               }}
-              title="Sessions in this project"
+              title="Every chat, in every folder"
             />
             <SidebarItem
               icon={<Plus size={14} />}
@@ -639,7 +654,7 @@ export function Sidebar(): React.JSX.Element {
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
         <div className="mb-1 flex items-center justify-between px-2">
           <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-faint">
-            {activeWorkspace ? `Recent in ${activeWorkspace.name}` : 'Recent sessions'}
+            {activeWorkspace ? `Recent in ${directoryLabel(activeWorkspace)}` : 'Recent chats'}
           </div>
           <button
             type="button"

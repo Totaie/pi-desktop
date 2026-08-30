@@ -132,6 +132,16 @@ export function registerSessionHandlers(ctx: IpcContext): void {
     return runtime
   }
 
+  // Abort the turn of one named runtime, which may not be the active one.
+  // Deliberately an abort and not stopSessionRuntime(): stopping kills the
+  // engine and throws away a warm ~27k-token prompt, whereas aborting cancels
+  // the turn and leaves the process idle, so the runtime budget can evict it
+  // cleanly a moment later if the user has moved on.
+  ipcMain.handle(IPC_CHANNELS.SESSION_ABORT_RUNTIME, async (_event, runtimeId: unknown) => {
+    if (!isString(runtimeId)) throw new Error('runtimeId must be a string')
+    return workspaceManager.sendCommandToSessionRuntime(runtimeId, { type: 'abort' })
+  })
+
   ipcMain.handle(IPC_CHANNELS.SESSION_CLOSE_RUNTIME, async (_event, runtimeId: unknown): Promise<SessionRuntimeCloseResult | null> => {
     if (!isString(runtimeId)) throw new Error('runtimeId must be a string')
     const result = await workspaceManager.closeSessionRuntime(runtimeId)

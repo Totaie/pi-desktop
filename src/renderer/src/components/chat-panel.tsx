@@ -250,14 +250,14 @@ export function ChatPanel(): React.JSX.Element {
                       <h2 className="text-2xl font-semibold text-primary">What should {engineLabel} work on?</h2>
                       <p className="mt-1 text-sm text-dim">
                         {piStatus === 'running'
-                          ? 'Pick a project and describe what you want done.'
+                          ? 'Pick a folder and describe what you want done.'
                           : piStatus === 'starting'
                             ? piStartupPhase === 'waiting-on-engine'
                               ? `${engineLabel} is up — waiting for the engine to finish loading. Local models can take a while…`
                               : `Starting ${engineLabel} agent…`
                             : piStatus === 'error'
                               ? `Failed to start ${engineLabel}. Check settings.`
-                              : `Choose a project — ${engineLabel} starts when you send.`}
+                              : `Choose a folder — ${engineLabel} starts when you send.`}
                       </p>
                     </div>
                     <div className="w-full max-w-3xl">

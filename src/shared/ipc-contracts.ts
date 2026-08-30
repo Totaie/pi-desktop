@@ -28,6 +28,16 @@ export const IPC_CHANNELS = {
   SESSION_NEW: 'session:new',
   SESSION_LAUNCH_TASK: 'session:launch-task',
   SESSION_CLOSE_RUNTIME: 'session:close-runtime',
+  // Abort the turn of ONE named runtime. PI_ABORT only reaches getActivePi(),
+  // which is useless for the case this exists to serve: the user is in project
+  // B and wants to stop the turn still running in project A.
+  SESSION_ABORT_RUNTIME: 'session:abort-runtime',
+
+  // Remote access: a temporary Cloudflare tunnel whose URL is handed to a
+  // phone by QR code and dies with the session.
+  REMOTE_START: 'remote:start',
+  REMOTE_STOP: 'remote:stop',
+  REMOTE_STATUS: 'remote:status',
   SESSION_SWITCH: 'session:switch',
   SESSION_LIST_RUNTIMES: 'session:list-runtimes',
   SESSION_FORK: 'session:fork',
@@ -217,6 +227,20 @@ export interface PiStatus {
   engine?: AgentEngineKind
   /** Present only while status is 'starting'. */
   startupPhase?: PiStartupPhase
+}
+
+/**
+ * State of the temporary Cloudflare tunnel backing remote access.
+ *
+ * `url` is null in every state but 'running', and is never persisted: a quick
+ * tunnel gets a fresh hostname each start, so a remembered one would send a
+ * scanned QR somewhere that no longer exists.
+ */
+export interface RemoteTunnelStatus {
+  state: 'stopped' | 'starting' | 'running' | 'error'
+  url: string | null
+  port: number | null
+  error: string | null
 }
 
 export type SessionRuntimeActivity = 'working' | 'needs-approval' | 'completed' | 'failed'

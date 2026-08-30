@@ -211,6 +211,65 @@ function workspaceHasLivePi(
   )
 }
 
+/**
+ * A runtime in a DIFFERENT directory that is in the middle of a turn.
+ *
+ * Only one engine runs at a time (MAX_LIVE_SESSION_RUNTIMES), and the main
+ * process will not evict a runtime that is 'working' or 'needs-approval' — it
+ * deliberately exceeds the budget rather than killing a turn someone is waiting
+ * on. That protection is correct, but the consequence is two engines queued
+ * against a local server that serves one request at a time, which reads to the
+ * user as the app hanging. So ask before doing it, rather than after.
+ *
+ * Scoped to a different workspace on purpose. A busy *sibling* in the folder
+ * you are already in is not a hand-off and must not raise anything: the app
+ * legitimately runs a background runtime alongside a stopped active one in the
+ * same workspace, and prompting there stalls an ordinary lazy start behind a
+ * dialog that answers a question the user never asked.
+ */
+function findBusyForeignRuntime(
+  runtimes: Record<string, SessionRuntimeInfo>,
+  activeRuntimeId: string | null,
+  activeWorkspaceId: string | null
+): SessionRuntimeInfo | null {
+  for (const runtime of Object.values(runtimes)) {
+    if (runtime.runtimeId === activeRuntimeId) continue
+    if (activeWorkspaceId && runtime.workspaceId === activeWorkspaceId) continue
+    if (runtime.status !== 'running') continue
+    if (runtime.activity === 'working' || runtime.activity === 'needs-approval') return runtime
+  }
+  return null
+}
+
+/** Human label for a workspace id, falling back to something non-empty. */
+function workspaceLabel(workspaces: Workspace[], workspaceId: string): string {
+  return workspaces.find((w) => w.id === workspaceId)?.name ?? 'another project'
+}
+
+/**
+ * Wait for an aborted runtime to leave its mid-turn state.
+ *
+ * The abort is only a request: the engine finishes the in-flight step before
+ * reporting 'completed'. Starting the next engine immediately would leave the
+ * aborted one still protected from eviction, so the budget would be exceeded
+ * anyway and the hand-off would not be seamless. Bounded, because a wedged
+ * engine must not block the user's prompt forever — on timeout we proceed and
+ * accept one extra process rather than swallowing the prompt.
+ */
+async function waitForRuntimeIdle(
+  read: () => Record<string, SessionRuntimeInfo>,
+  runtimeId: string,
+  timeoutMs = 5000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const runtime = read()[runtimeId]
+    if (!runtime) return
+    if (runtime.activity !== 'working' && runtime.activity !== 'needs-approval') return
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+}
+
 // ─── Store Shape ─────────────────────────────────────────────────────────────
 
 interface AppState {
@@ -500,6 +559,10 @@ interface AppActions {
   dismissExtensionNotify: () => void
 
   // App confirmation dialog (promise-based; resolves true on confirm)
+  /** Whether the remote-access (QR) panel is showing. */
+  remotePanelOpen: boolean
+  setRemotePanelOpen: (open: boolean) => void
+
   requestConfirm: (options: ConfirmOptions) => Promise<boolean>
   resolveConfirm: (confirmed: boolean) => void
 
@@ -510,6 +573,25 @@ interface AppActions {
   // Workspaces
   loadWorkspaces: () => Promise<void>
   createWorkspace: (name: string, path: string) => Promise<void>
+  /**
+   * Start a new chat in a directory, asking for one if none is given.
+   *
+   * The directory is the only thing a chat is configured with. A workspace is
+   * still what holds a cwd underneath, but it is an implementation detail here:
+   * an existing one for this path is reused, so picking the same folder twice
+   * gives a second chat in it rather than a duplicate project. Resolves false
+   * when the user dismissed the folder dialog.
+   */
+  createChatInDirectory: (directory?: string) => Promise<boolean>
+  /**
+   * Bring one chat to the front, wherever its directory is.
+   *
+   * Ordered on purpose: the workspace has to be active before the session
+   * switch, or the switch resolves the session against the previous cwd. Lives
+   * here rather than in the tab component because that ordering is a
+   * correctness rule, not a rendering detail.
+   */
+  openChat: (runtimeId: string) => Promise<void>
   /** Create a clean Git worktree and start it as a new independent tab. */
   createWorktreeTab: () => Promise<void>
   /**
@@ -835,6 +917,7 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
   sessionStats: null,
   sessionList: [],
   sessionRuntimes: {},
+  remotePanelOpen: false,
   activeSessionRuntimeId: null,
   forkMessages: [],
 
@@ -1003,6 +1086,38 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
       return
     }
     if (trimmed.startsWith('/workflows run ')) get().setWorkflowPanelOpen(true)
+
+    // One engine at a time. If a different project is mid-turn, starting here
+    // would quietly run a second Pi against a single-slot local server, so the
+    // user decides: stop that turn, or stay put. Checked before startPi()
+    // because that is the call that would spawn the second process.
+    const busy = findBusyForeignRuntime(
+      get().sessionRuntimes,
+      get().activeSessionRuntimeId,
+      get().activeWorkspace?.id ?? null
+    )
+    if (busy) {
+      const label = workspaceLabel(get().workspaces, busy.workspaceId)
+      const stopIt = await get().requestConfirm({
+        title: 'Pi is still working',
+        message: busy.activity === 'needs-approval'
+          ? `Pi is waiting for approval in ${label}. Only one project runs at a time — stop that turn and continue here?`
+          : `Pi is still responding in ${label}. Only one project runs at a time — stop that turn and continue here?`,
+        confirmLabel: 'Stop it and send',
+        cancelLabel: 'Stay there',
+        danger: true,
+      })
+      if (!stopIt) return
+      try {
+        await window.piDesktop.session.abortRuntime(busy.runtimeId)
+        // Let the abort land before spawning here, so the hand-off is a swap
+        // rather than a moment with two engines fighting over the model.
+        await waitForRuntimeIdle(() => get().sessionRuntimes, busy.runtimeId)
+      } catch {
+        // An abort that fails is not a reason to swallow the prompt; the worst
+        // case is the pre-existing behaviour of one extra live process.
+      }
+    }
 
     // Navigation never spawns Pi; the first prompt does. startPi applies the
     // resume preference, so a previously-used project continues its last
@@ -2332,6 +2447,8 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     }
   },
 
+  setRemotePanelOpen: (open) => set({ remotePanelOpen: open }),
+
   requestConfirm: (options) =>
     new Promise<boolean>((resolve) => {
       // Resolve any dialog already open (treated as cancelled) before showing.
@@ -2404,6 +2521,56 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     } catch {
       // Silent failure
     }
+  },
+
+  openChat: async (runtimeId) => {
+    const runtime = get().sessionRuntimes[runtimeId]
+    if (!runtime) return
+    get().setCurrentView('chat')
+
+    // Already the live one: switching again would tear down and rebuild the
+    // session for no reason.
+    if (runtime.runtimeId === get().activeSessionRuntimeId) return
+
+    if (runtime.workspaceId !== get().activeWorkspace?.id) {
+      const switched = await get().activateWorkspace(runtime.workspaceId)
+      // A refused switch is a real answer — the user cancelled the dirty-editor
+      // prompt — so do not then drag them into the session anyway.
+      if (!switched) return
+    }
+    // A chat whose agent has not written its session file yet has nothing to
+    // switch to; activating its directory is the whole job.
+    if (!runtime.sessionPath) return
+    const cwd = get().workspaces.find((w) => w.id === runtime.workspaceId)?.path
+    await get().switchSession(runtime.sessionPath, cwd)
+  },
+
+  createChatInDirectory: async (directory) => {
+    const path = directory ?? await window.piDesktop.system.openDialog()
+    if (!path) return false
+
+    // createWorkspace already routes a duplicate path to activateWorkspace with
+    // the full switch teardown, so this covers both "new folder" and "another
+    // chat in a folder I already use" without branching on which one it is.
+    await get().createWorkspace(workspaceNameFromFolderPath(path), path)
+
+    // A directory the user just chose but which failed to become active would
+    // otherwise start the chat in whatever was open before — silently the wrong
+    // cwd, which is the one mistake this flow must not make.
+    const active = get().activeWorkspace
+    if (!active || !pathsEqual(active.path, path)) {
+      get().addMessage({
+        id: generateId(),
+        role: 'system',
+        content: `Could not open ${path} for a new chat.`,
+        timestamp: Date.now(),
+      })
+      return false
+    }
+
+    get().setCurrentView('chat')
+    await get().createNewSession()
+    return true
   },
 
   createWorkspace: async (name, path) => {

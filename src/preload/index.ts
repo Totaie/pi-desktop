@@ -68,6 +68,7 @@ import type {
   GitConveyorCommitOptions,
   GitConveyorPullRequestOptions,
   GitConveyorPullRequestResult,
+  RemoteTunnelStatus,
 } from '../shared/ipc-contracts'
 import type { ThemeFile } from '../shared/theme/theme-file'
 import { IPC_CHANNELS } from '../shared/ipc-contracts'
@@ -99,6 +100,8 @@ interface PiDesktopAPI {
     createNew(): Promise<SessionRuntimeInfo>
     launchTask(options: SessionLaunchTaskOptions): Promise<SessionRuntimeInfo>
     closeRuntime(runtimeId: string): Promise<SessionRuntimeCloseResult | null>
+    /** Abort the turn of a specific runtime, active or not. */
+    abortRuntime(runtimeId: string): Promise<unknown>
     switch(sessionPath: string, cwd?: string): Promise<SessionRuntimeInfo>
     listRuntimes(): Promise<SessionRuntimeInfo[]>
     fork(entryId?: string): Promise<unknown>
@@ -257,6 +260,14 @@ interface PiDesktopAPI {
     getGitBranch(): Promise<string | null>
   }
 
+  // Remote access over a temporary Cloudflare tunnel
+  remote: {
+    /** Publish `port` and resolve once Cloudflare has named the tunnel. */
+    start(port: number): Promise<RemoteTunnelStatus>
+    stop(): Promise<RemoteTunnelStatus>
+    status(): Promise<RemoteTunnelStatus>
+  }
+
   // System
   system: {
     openDialog(options?: OpenDialogOptions): Promise<string | null>
@@ -364,6 +375,7 @@ const api: PiDesktopAPI = {
     createNew: () => ipcRenderer.invoke(IPC_CHANNELS.SESSION_NEW),
     launchTask: (options) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_LAUNCH_TASK, options),
     closeRuntime: (runtimeId) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_CLOSE_RUNTIME, runtimeId),
+    abortRuntime: (runtimeId) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_ABORT_RUNTIME, runtimeId),
     switch: (sessionPath, cwd) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_SWITCH, sessionPath, cwd),
     listRuntimes: () => ipcRenderer.invoke(IPC_CHANNELS.SESSION_LIST_RUNTIMES),
     fork: (entryId) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_FORK, entryId),
@@ -507,6 +519,12 @@ const api: PiDesktopAPI = {
     getStagedDiff: (filePath) => ipcRenderer.invoke(IPC_CHANNELS.FILE_STAGED_DIFF, filePath),
     getGitStatus: () => ipcRenderer.invoke(IPC_CHANNELS.GIT_STATUS),
     getGitBranch: () => ipcRenderer.invoke(IPC_CHANNELS.GIT_BRANCH),
+  },
+
+  remote: {
+    start: (port) => ipcRenderer.invoke(IPC_CHANNELS.REMOTE_START, { port }),
+    stop: () => ipcRenderer.invoke(IPC_CHANNELS.REMOTE_STOP),
+    status: () => ipcRenderer.invoke(IPC_CHANNELS.REMOTE_STATUS),
   },
 
   system: {

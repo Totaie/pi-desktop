@@ -203,6 +203,20 @@ const piDesktopStub = {
       calls.push('createNew')
       return { success: true }
     },
+    abortRuntime: async (runtimeId: string) => {
+      calls.push(`abortRuntime:${runtimeId}`)
+      // Mirror the real abort: the runtime leaves its mid-turn state, which is
+      // what waitForRuntimeIdle is waiting on. Without this the store would
+      // spin out its whole timeout on every test that stops a foreign turn.
+      const runtimes = useAppStore.getState().sessionRuntimes
+      const runtime = runtimes[runtimeId]
+      if (runtime) {
+        useAppStore.setState({
+          sessionRuntimes: { ...runtimes, [runtimeId]: { ...runtime, activity: 'completed' } },
+        })
+      }
+      return { ok: true }
+    },
     closeRuntime: async (runtimeId: string) => {
       calls.push(`closeRuntime:${runtimeId}`)
       return { runtimeId, workspaceId: WORKSPACE_ONE.id, sessionPath: SESSION_PATH, empty: false, deleted: false }
@@ -910,6 +924,91 @@ test('a stopped active runtime reports stopped even with a live sibling', async 
   assert.equal(state.piStatus, 'stopped', 'a background sibling must not mask the stopped active runtime')
   assert.equal(state.sessionLoading, false, 'nothing hydrates while the active runtime is down')
   assert.equal(calls.includes('getMessages'), false)
+})
+
+test('a busy sibling in the SAME folder never raises the hand-off prompt', async () => {
+  // Regression. Scoping the check to "not the active runtime" instead of "a
+  // different workspace" made an ordinary lazy start wait on a dialog nobody
+  // had asked for, and with no dialog mounted the send hung indefinitely —
+  // this file took 898s to fail instead of 1.7s to pass.
+  workspaceListResult = [WORKSPACE_ONE, WORKSPACE_TWO]
+  activeWorkspaceResult = WORKSPACE_TWO
+  useAppStore.setState({
+    activeWorkspace: WORKSPACE_TWO,
+    workspaces: [WORKSPACE_ONE, WORKSPACE_TWO],
+    sessionRuntimes: {
+      'rt-active': runtimeIn(WORKSPACE_TWO, { runtimeId: 'rt-active', status: 'stopped', active: true }),
+      'rt-sibling': runtimeIn(WORKSPACE_TWO, {
+        runtimeId: 'rt-sibling',
+        status: 'running',
+        pid: 5,
+        activity: 'working',
+      }),
+    },
+  })
+  calls.length = 0
+  // Deliberately NOT armed with answerConfirms: a dialog here is the failure.
+  await useAppStore.getState().sendPrompt('ship it')
+
+  assert.equal(useAppStore.getState().confirmRequest, null, 'a same-folder sibling must not prompt')
+  assert.equal(calls.some((c) => c.startsWith('abortRuntime:')), false, 'nothing may be aborted')
+  assert.notEqual(calls.indexOf('pi.start'), -1, 'the send proceeds as a normal lazy start')
+})
+
+test('a busy runtime in another folder is offered up before a second engine starts', async () => {
+  workspaceListResult = [WORKSPACE_ONE, WORKSPACE_TWO]
+  activeWorkspaceResult = WORKSPACE_TWO
+  useAppStore.setState({
+    activeWorkspace: WORKSPACE_TWO,
+    workspaces: [WORKSPACE_ONE, WORKSPACE_TWO],
+    sessionRuntimes: {
+      'rt-elsewhere': runtimeIn(WORKSPACE_ONE, {
+        runtimeId: 'rt-elsewhere',
+        status: 'running',
+        pid: 7,
+        activity: 'working',
+      }),
+    },
+  })
+  calls.length = 0
+  answerConfirm(true)
+
+  await useAppStore.getState().sendPrompt('ship it')
+
+  const abortAt = calls.indexOf('abortRuntime:rt-elsewhere')
+  assert.notEqual(abortAt, -1, 'confirming stops the other folder’s turn')
+  const startAt = calls.indexOf('pi.start')
+  assert.notEqual(startAt, -1, 'and the prompt still goes through')
+  assert.ok(abortAt < startAt, 'the hand-off happens before the second engine spawns')
+})
+
+test('declining the hand-off sends nothing and leaves the other turn alone', async () => {
+  workspaceListResult = [WORKSPACE_ONE, WORKSPACE_TWO]
+  activeWorkspaceResult = WORKSPACE_TWO
+  useAppStore.setState({
+    activeWorkspace: WORKSPACE_TWO,
+    workspaces: [WORKSPACE_ONE, WORKSPACE_TWO],
+    sessionRuntimes: {
+      'rt-elsewhere': runtimeIn(WORKSPACE_ONE, {
+        runtimeId: 'rt-elsewhere',
+        status: 'running',
+        pid: 7,
+        activity: 'needs-approval',
+      }),
+    },
+  })
+  calls.length = 0
+  answerConfirm(false)
+
+  await useAppStore.getState().sendPrompt('ship it')
+
+  assert.equal(calls.some((c) => c.startsWith('abortRuntime:')), false, 'the other turn survives')
+  assert.equal(calls.includes('pi.start'), false, 'and no second engine is started')
+  assert.equal(
+    calls.findIndex((c) => c.startsWith('prompt:')),
+    -1,
+    'the prompt is not delivered anywhere'
+  )
 })
 
 test('the first prompt lazy-starts a workspace whose active runtime is stopped', async () => {

@@ -49,12 +49,22 @@ const MANAGED_WORKTREES_DIR = 'worktrees'
 /**
  * How many session runtimes may own a live Pi child process at the same time.
  * Every runtime is a full agent process, so without a bound the app leaks one
- * process per session the user ever opens, until it quits. The active session
- * plus a small recently-used set keeps tab switching instant while capping
- * memory; an evicted tab stays open and spawns a fresh process when selected
- * again, because its session lives on disk and not in the process.
+ * process per session the user ever opened, until it quits. An evicted tab
+ * stays open and spawns a fresh process when selected again, because its
+ * session lives on disk and not in the process.
+ *
+ * ONE, not six. A local model server serves a single request at a time, so a
+ * second live engine does not buy concurrency here -- it buys a second copy of
+ * a ~27k-token system prompt queued behind the first, which reads to the user
+ * as the app hanging. One engine, moved between projects on demand, matches
+ * both the hardware and the way the app is actually used.
+ *
+ * The budget alone cannot silently take a turn away: enforceLiveRuntimeBudget
+ * refuses to evict a runtime that is 'working' or 'needs-approval'. That case
+ * is now surfaced to the user instead of quietly exceeding the budget -- see
+ * findBusyForeignRuntime() and the renderer's busy-runtime prompt.
  */
-export const MAX_LIVE_SESSION_RUNTIMES = 6
+export const MAX_LIVE_SESSION_RUNTIMES = 1
 
 export interface Workspace {
   id: string
@@ -169,7 +179,15 @@ export class WorkspaceManager {
   // forwarded for the active workspace only.
   private watchingWorkspaceId: string | null = null
 
-  constructor() {
+  /**
+   * @param maxLiveRuntimes Live-process cap, defaulting to
+   * MAX_LIVE_SESSION_RUNTIMES. Injectable because the eviction *policy* (least
+   * recently used first, never the active / starting / mid-turn one) is what
+   * the tests are about, and that policy is independent of the cap's value —
+   * pinning a roomier cap there keeps those cases expressible now that
+   * production runs with a cap of one.
+   */
+  constructor(private readonly maxLiveRuntimes: number = MAX_LIVE_SESSION_RUNTIMES) {
     this.configPath = getGuiDataPath(WORKSPACES_FILE)
   }
 
@@ -324,7 +342,7 @@ export class WorkspaceManager {
       (entry) => entry.info.runtimeId !== incomingRuntimeId && this.isRuntimeLive(entry)
     ).length
 
-    while (live >= MAX_LIVE_SESSION_RUNTIMES) {
+    while (live >= this.maxLiveRuntimes) {
       let victim: SessionRuntimeEntry | null = null
       for (const entry of this.sessionRuntimes.values()) {
         if (!evictable(entry)) continue
@@ -335,7 +353,7 @@ export class WorkspaceManager {
       if (!victim) return
       appLog.info(
         'workspaces',
-        `Stopped idle session runtime ${victim.info.runtimeId} to stay within ${MAX_LIVE_SESSION_RUNTIMES} live Pi processes`
+        `Stopped idle session runtime ${victim.info.runtimeId} to stay within ${this.maxLiveRuntimes} live Pi processes`
       )
       // stopSessionRuntime emits the runtime snapshot, so the renderer marks
       // the tab stopped instead of showing a process that no longer exists.
