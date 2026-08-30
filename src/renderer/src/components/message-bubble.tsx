@@ -12,6 +12,7 @@ import {
   type EditBlock,
 } from '../message-grouping'
 import { toolCallIconFor } from './tool-call-icon'
+import { TurnTokens, sumTurnTokens } from './turn-tokens'
 import { getCodeEditorLanguageName } from './code-editor-language'
 import { highlightCodeToHtml } from './chat-code-highlight'
 import { LineNumberedCode } from './line-numbered-code'
@@ -26,7 +27,6 @@ import {
   ChevronDown,
   ChevronRight,
   Brain,
-  Bot,
   Edit3,
   GitBranch,
   RotateCcw,
@@ -374,9 +374,11 @@ function AssistantMessage({
             the thinking block tucked under it. */}
         {showModelHeader && (
           <div className="flex items-start gap-3">
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-card">
-              <Bot size={14} className="text-muted" />
-            </div>
+            {/* Spacer, not an avatar. There is only ever one assistant, so its
+                picture identified nothing — but the width still has to be held,
+                because the tool-call rows below keep a functional icon and
+                their bodies must stay on the same left edge. */}
+            <div className="h-7 w-7 shrink-0" />
             <div className="min-w-0 flex-1">
               <div className="flex h-7 items-center gap-2 text-sm text-dim">
                 <span>{message.provider}</span>
@@ -388,6 +390,7 @@ function AssistantMessage({
                     <span>${message.cost.toFixed(4)}</span>
                   </>
                 )}
+                <TurnTokens tokens={message.tokens} />
                 <span className="text-ghost">·</span>
                 <RelativeTime timestamp={message.timestamp} />
               </div>
@@ -437,13 +440,7 @@ function AssistantMessage({
             (the group shows one shared header above) where it keeps an empty
             spacer so its body stays aligned with the icon-avatared rows.
             Pure-tool turns are handled earlier (each call gets its own icon). */}
-        {hideModelHeader ? (
-          <div className="h-7 w-7 shrink-0" />
-        ) : (
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-card">
-            <Bot size={14} className="text-muted" />
-          </div>
-        )}
+        <div className="h-7 w-7 shrink-0" />
 
         {/* Content */}
         <div className="min-w-0 flex-1">
@@ -459,6 +456,7 @@ function AssistantMessage({
                   <span>${message.cost.toFixed(4)}</span>
                 </>
               )}
+              <TurnTokens tokens={message.tokens} />
               <span className="text-ghost">·</span>
               <RelativeTime timestamp={message.timestamp} />
             </div>
@@ -851,9 +849,7 @@ function ToolGroupBubbleImpl({
       <div className="flex items-start gap-3">
         {/* Bot avatar + model header so a grouped run reads like any other
             assistant message, not a distinct kind of block. */}
-        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-card">
-          <Bot size={14} className="text-muted" />
-        </div>
+        <div className="h-7 w-7 shrink-0" />
         <div className="min-w-0 flex-1">
           {showSharedHeader && (
             <div className="flex h-7 items-center gap-2 text-sm text-dim">
@@ -866,6 +862,7 @@ function ToolGroupBubbleImpl({
                   <RelativeTime timestamp={groupTimestamp} />
                 </>
               )}
+              <TurnTokens tokens={sumTurnTokens(messages)} />
             </div>
           )}
           <div

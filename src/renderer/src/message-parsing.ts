@@ -24,6 +24,23 @@ export interface DisplayMessage {
   model?: string
   provider?: string
   cost?: number
+  /**
+   * Tokens this turn spent, as Pi reported them on the ending message.
+   *
+   * Per turn, not per message: a turn is the unit that costs something and the
+   * unit a user can act on — the prompt plus every tool call it made. Splitting
+   * it finer would attribute a shared prefill to whichever bubble happened to
+   * come first. Absent for turns Pi reported no usage for (older sessions,
+   * aborted turns), which is why every field is optional rather than zero —
+   * zero is a measurement, absence is not.
+   */
+  tokens?: {
+    input?: number
+    output?: number
+    cacheRead?: number
+    cacheWrite?: number
+    total?: number
+  }
   attachments?: DisplayAttachment[]
   // toolResult only: the id/name of the tool call this result answers. `toolName`
   // and `toolFile` (the operated-on file) are resolved from the paired call by

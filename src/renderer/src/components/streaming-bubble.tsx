@@ -4,7 +4,8 @@ import { toolLabel } from '../message-grouping'
 import { toolCallIconFor } from './tool-call-icon'
 import { useAppStore } from '../store'
 import { DEFAULT_SETTINGS } from '../../../shared/default-settings'
-import { Brain, Bot, Loader2 } from 'lucide-react'
+import { Brain, Loader2 } from 'lucide-react'
+import { PixelLoader } from './pixel-loader'
 import { clsx } from 'clsx'
 
 interface StreamingBubbleProps {
@@ -43,18 +44,16 @@ export function StreamingBubble({ content, thinking, toolCalls }: StreamingBubbl
 
   return (
     <div className="mb-4 animate-fade-in">
-      <div className="flex items-start gap-3">
-        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent-bg">
-          <Bot size={14} className="text-accent-fg animate-pulse" />
-        </div>
-
+      {/* No model avatar. There is only ever one assistant in a chat, so a
+          picture next to every one of its turns identifies nothing and costs a
+          column of width on every line. */}
+      <div className="flex items-start">
         <div className="min-w-0 flex-1">
           {thinking && thinkingEnabled && (
             <div className="thinking-hover mb-2 min-w-0">
               <div className="flex h-7 items-center gap-1.5 text-sm text-dim">
                 <Brain size={12} className="shrink-0" />
-                <Loader2 size={12} className="shrink-0 animate-spin text-special" />
-                <span>Thinking</span>
+                <PixelLoader label="Thinking" className="text-special" />
               </div>
               <div
                 ref={thinkingScrollRef}
@@ -114,9 +113,11 @@ export function StreamingBubble({ content, thinking, toolCalls }: StreamingBubbl
           )}
 
           {!content && !thinking && toolCalls.size === 0 && (
-            <div className="flex h-7 items-center gap-2 text-sm text-dim">
-              <Loader2 size={12} className="animate-spin" />
-              Waiting for response...
+            // The longest wait in the app: on a local model this is prompt
+            // prefill, which can run for a minute before the first token. The
+            // elapsed counter is the whole reason this is not a spinner.
+            <div className="flex h-7 items-center text-sm text-dim">
+              <PixelLoader label="Waiting for response" />
             </div>
           )}
         </div>

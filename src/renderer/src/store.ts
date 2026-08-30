@@ -3411,6 +3411,39 @@ function turnErrorText(message?: Record<string, unknown>): string | null {
   return null
 }
 
+/**
+ * Token usage off the message that ended a turn.
+ *
+ * Read defensively: the field has appeared as `usage` and as `tokenUsage`, and
+ * the counts as both flat numbers and a nested object, across engines and Pi
+ * versions. A wrong guess here would silently render a turn as free, so
+ * anything not actually a finite number is dropped rather than coerced — and a
+ * turn with no recognisable usage returns undefined, which the UI renders as
+ * nothing instead of "0 tokens".
+ */
+function turnTokens(message?: Record<string, unknown>): DisplayMessage['tokens'] {
+  if (!message) return undefined
+  const raw = (message.usage ?? message.tokenUsage) as Record<string, unknown> | undefined
+  if (!raw || typeof raw !== 'object') return undefined
+
+  const num = (value: unknown): number | undefined =>
+    typeof value === 'number' && Number.isFinite(value) ? value : undefined
+
+  const input = num(raw.input) ?? num(raw.inputTokens) ?? num(raw.prompt_tokens)
+  const output = num(raw.output) ?? num(raw.outputTokens) ?? num(raw.completion_tokens)
+  const cacheRead = num(raw.cacheRead) ?? num(raw.cache_read_input_tokens)
+  const cacheWrite = num(raw.cacheWrite) ?? num(raw.cache_creation_input_tokens)
+  const reported = num(raw.total) ?? num(raw.total_tokens)
+
+  // Derive a total only when something was actually reported; summing an empty
+  // set would manufacture a confident zero.
+  const parts = [input, output].filter((n): n is number => n !== undefined)
+  const total = reported ?? (parts.length > 0 ? parts.reduce((a, b) => a + b, 0) : undefined)
+
+  if ([input, output, cacheRead, cacheWrite, total].every((n) => n === undefined)) return undefined
+  return { input, output, cacheRead, cacheWrite, total }
+}
+
 function handleTurnComplete(
   set: ZustandSet,
   message?: Record<string, unknown>
@@ -3446,6 +3479,7 @@ function handleTurnComplete(
         toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
         model,
         provider,
+        tokens: turnTokens(message),
       })
 
       for (const [id, tc] of entries) {
