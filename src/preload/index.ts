@@ -68,7 +68,7 @@ import type {
   GitConveyorCommitOptions,
   GitConveyorPullRequestOptions,
   GitConveyorPullRequestResult,
-  RemoteTunnelStatus,
+  RemoteStatus,
 } from '../shared/ipc-contracts'
 import type { ThemeFile } from '../shared/theme/theme-file'
 import { IPC_CHANNELS } from '../shared/ipc-contracts'
@@ -260,12 +260,12 @@ interface PiDesktopAPI {
     getGitBranch(): Promise<string | null>
   }
 
-  // Remote access over a temporary Cloudflare tunnel
+  // Remote access: local Remote Pi relay + temporary Cloudflare tunnel
   remote: {
-    /** Publish `port` and resolve once Cloudflare has named the tunnel. */
-    start(port: number): Promise<RemoteTunnelStatus>
-    stop(): Promise<RemoteTunnelStatus>
-    status(): Promise<RemoteTunnelStatus>
+    /** Start the relay, then publish it. Resolves once both settle. */
+    start(port?: number, relayPath?: string): Promise<RemoteStatus>
+    stop(): Promise<RemoteStatus>
+    status(): Promise<RemoteStatus>
   }
 
   // System
@@ -522,7 +522,7 @@ const api: PiDesktopAPI = {
   },
 
   remote: {
-    start: (port) => ipcRenderer.invoke(IPC_CHANNELS.REMOTE_START, { port }),
+    start: (port, relayPath) => ipcRenderer.invoke(IPC_CHANNELS.REMOTE_START, { port, relayPath }),
     stop: () => ipcRenderer.invoke(IPC_CHANNELS.REMOTE_STOP),
     status: () => ipcRenderer.invoke(IPC_CHANNELS.REMOTE_STATUS),
   },

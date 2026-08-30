@@ -243,6 +243,30 @@ export interface RemoteTunnelStatus {
   error: string | null
 }
 
+/**
+ * The locally-run Remote Pi relay the phone app talks to.
+ *
+ * A separate process, not a reimplementation: the iOS app authenticates
+ * against the reference relay's exact wire behaviour, so this app owns its
+ * lifecycle and nothing else about it.
+ */
+export interface RemoteRelayStatus {
+  state: 'stopped' | 'starting' | 'running' | 'error'
+  port: number | null
+  error: string | null
+}
+
+/**
+ * Remote access as one thing, because it only works as one thing: a relay with
+ * no tunnel is unreachable, and a tunnel with no relay publishes a closed port.
+ * The QR is only meaningful when both are up, so they are reported together
+ * rather than leaving the UI to decide what a half-started pair means.
+ */
+export interface RemoteStatus {
+  relay: RemoteRelayStatus
+  tunnel: RemoteTunnelStatus
+}
+
 export type SessionRuntimeActivity = 'working' | 'needs-approval' | 'completed' | 'failed'
 
 /** Live runtime for one Pi session. Multiple runtimes may share one workspace cwd. */

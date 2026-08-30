@@ -47,6 +47,29 @@ export function resolveCloudflaredPath(): string | null {
  */
 const QUICK_TUNNEL_URL = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/i
 
+/**
+ * Poll the public URL until Cloudflare's edge actually routes to it.
+ *
+ * Any HTTP answer counts, including a 4xx: the question is whether the edge
+ * reaches the origin at all, not what the origin thinks of an unauthenticated
+ * probe. Only a connection-level failure means "not yet".
+ */
+async function waitForPublicRoute(url: string, timeoutMs = 40_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 8000)
+      await fetch(`${url}/health`, { signal: controller.signal })
+      clearTimeout(timer)
+      return true
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+    }
+  }
+  return false
+}
+
 export class RemoteTunnel extends EventEmitter {
   private child: ChildProcess | null = null
   private status: RemoteTunnelStatus = { state: 'stopped', url: null, port: null, error: null }
@@ -61,12 +84,13 @@ export class RemoteTunnel extends EventEmitter {
   }
 
   /**
-   * Bring a tunnel up for `port` and resolve once Cloudflare has named it.
+   * Bring a tunnel up for `port` and resolve once it is reachable.
    *
-   * Resolves on the URL rather than on spawn, because a tunnel with no
-   * hostname yet is useless to the caller — there is nothing to put in a QR.
+   * Not on spawn (a tunnel with no hostname has nothing to put in a QR) and
+   * not on naming either — see waitForPublicRoute. The budget covers spawn,
+   * naming, and edge propagation together, which is why it is generous.
    */
-  async start(port: number, timeoutMs = 45_000): Promise<RemoteTunnelStatus> {
+  async start(port: number, timeoutMs = 90_000): Promise<RemoteTunnelStatus> {
     if (this.child) this.stop()
 
     const bin = resolveCloudflaredPath()
@@ -107,14 +131,36 @@ export class RemoteTunnel extends EventEmitter {
         finish()
       }, timeoutMs)
 
+      let claimed = false
       const scan = (chunk: Buffer): void => {
-        const text = chunk.toString()
-        if (this.status.url) return
-        const match = text.match(QUICK_TUNNEL_URL)
+        if (claimed) return
+        const match = chunk.toString().match(QUICK_TUNNEL_URL)
         if (!match) return
-        appLog.info('remote', `Quick tunnel up on ${match[0]} -> 127.0.0.1:${port}`)
-        this.setStatus({ state: 'running', url: match[0], error: null })
-        finish()
+        claimed = true
+        const url = match[0]
+        appLog.info('remote', `Quick tunnel named ${url} -> 127.0.0.1:${port}; waiting for the edge to route`)
+
+        // Naming is not reachability. MEASURED: cloudflared logs the hostname
+        // and "Registered tunnel connection" within a second or two, but the
+        // edge refuses connections for several seconds after that. Reporting
+        // 'running' at the name would hand out a QR that fails on the phone,
+        // away from the machine that could explain why — so the URL is proven
+        // from the outside before it is shown.
+        void waitForPublicRoute(url).then((reachable) => {
+          if (this.child !== child) return
+          if (reachable) {
+            appLog.info('remote', `Quick tunnel reachable at ${url}`)
+            this.setStatus({ state: 'running', url, error: null })
+          } else {
+            this.setStatus({
+              state: 'error',
+              url: null,
+              error: 'The tunnel was created but never became reachable from the internet.',
+            })
+            this.stop()
+          }
+          finish()
+        })
       }
 
       // Both streams are scanned: cloudflared has moved the banner between
