@@ -93,12 +93,38 @@ export class RemoteRelay extends EventEmitter {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {
         ...process.env,
+        // LOOPBACK ONLY. The relay's own default is 0.0.0.0, which would also
+        // expose the WebSocket and /mesh on every LAN, VPN and public Wi-Fi the
+        // machine is attached to — reachable by exactly the people the tunnel's
+        // unguessable hostname exists to exclude. cloudflared connects locally,
+        // so binding wider buys nothing and costs the whole perimeter.
+        // (Verified: bound to 0.0.0.0 the LAN address answered /health; bound
+        // here it is refused, and netstat shows 127.0.0.1 only.)
+        REMOTEPI_RELAY_BIND: '127.0.0.1',
         REMOTEPI_RELAY_PORT: String(port),
         REMOTEPI_MESH_DB_PATH: join(dataDir, 'mesh.db'),
         RUST_LOG: process.env.RUST_LOG ?? 'info',
       },
     })
     this.child = child
+
+    // Draining is not optional: a piped stdio the parent never reads fills its
+    // OS buffer and then blocks the child mid-write, so the relay would wedge
+    // after whatever volume of RUST_LOG output fits in a pipe — a failure that
+    // only appears once someone is actually using it.
+    //
+    // Draining is required; forwarding is not. At RUST_LOG=info the relay
+    // writes a line per connection, and mirroring all of it would bury the app
+    // log, so only warnings and errors are kept — the lines that mean
+    // something went wrong.
+    const forward = (chunk: Buffer): void => {
+      for (const line of chunk.toString().split('\n')) {
+        const text = line.trim()
+        if (text && /\b(WARN|ERROR)\b/.test(text)) appLog.warn('remote', `relay: ${text}`)
+      }
+    }
+    child.stdout?.on('data', forward)
+    child.stderr?.on('data', forward)
 
     child.on('error', (err) => {
       if (this.child !== child) return

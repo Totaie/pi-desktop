@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { app, ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipc-contracts'
 import type { RemoteStatus } from '../../shared/ipc-contracts'
 import { RemoteTunnel } from '../remote-tunnel'
@@ -55,11 +55,20 @@ export function registerRemoteHandlers(_ctx: IpcContext): void {
 
   ipcMain.handle(IPC_CHANNELS.REMOTE_STATUS, async (): Promise<RemoteStatus> => snapshot())
 
-  // Neither half may outlive the app that opened it.
+  // Neither half may outlive the app that opened it. A tunnel that survives
+  // the window is a live route into this machine that nothing on screen is
+  // still reporting — the one failure here that has no upper bound.
+  //
+  // Hooked to Electron's own quit events, not just process signals: a normal
+  // quit (closing the last window, Cmd/Alt+F4, the tray item) tears the app
+  // down through 'will-quit' without ever raising SIGINT or SIGTERM, so those
+  // alone would leave both children running.
   const shutdown = (): void => {
     tunnel.stop()
     relay.stop()
   }
+  app.on('will-quit', shutdown)
+  app.on('before-quit', shutdown)
   process.once('exit', shutdown)
   process.once('SIGINT', shutdown)
   process.once('SIGTERM', shutdown)

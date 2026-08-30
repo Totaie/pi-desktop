@@ -147,12 +147,22 @@ export function RemotePanel(): React.JSX.Element | null {
             </div>
           )}
 
-          {/* Stated plainly rather than buried. */}
-          <p className="text-[11px] leading-relaxed text-faint">
-            While this is live, anyone holding the URL can reach the relay on this
-            machine. It is unguessable and temporary, not private — treat it as a
-            password, and stop it when you are done.
-          </p>
+          {/* Stated plainly rather than buried, and specific rather than
+              reassuring. The protocol's own threat model is explicit that
+              there is no end-to-end encryption, so neither is this. */}
+          <div className="space-y-1.5 text-[11px] leading-relaxed text-faint">
+            <p>
+              The URL <em>is</em> the credential: anything holding it reaches the relay
+              until you stop it. Treat it like a password — it is unguessable and
+              temporary, not secret.
+            </p>
+            <p>
+              The relay runs here and listens on loopback only, so it is reachable
+              through this tunnel and nothing else — not your network. Messages are{' '}
+              <strong>not end-to-end encrypted</strong>: they are readable by the relay
+              (yours) and by Cloudflare, which terminates TLS in between.
+            </p>
+          </div>
 
           <div className="flex justify-end gap-2 pt-1">
             {live ? (

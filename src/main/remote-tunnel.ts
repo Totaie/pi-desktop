@@ -138,7 +138,10 @@ export class RemoteTunnel extends EventEmitter {
         if (!match) return
         claimed = true
         const url = match[0]
-        appLog.info('remote', `Quick tunnel named ${url} -> 127.0.0.1:${port}; waiting for the edge to route`)
+        // The hostname is NOT logged. It is the entire credential — anything
+        // holding it reaches this machine — and appLog persists to disk, so
+        // logging it would outlive the tunnel that made it dangerous.
+        appLog.info('remote', `Quick tunnel named for 127.0.0.1:${port}; waiting for the edge to route`)
 
         // Naming is not reachability. MEASURED: cloudflared logs the hostname
         // and "Registered tunnel connection" within a second or two, but the
@@ -149,7 +152,7 @@ export class RemoteTunnel extends EventEmitter {
         void waitForPublicRoute(url).then((reachable) => {
           if (this.child !== child) return
           if (reachable) {
-            appLog.info('remote', `Quick tunnel reachable at ${url}`)
+            appLog.info('remote', `Quick tunnel reachable for 127.0.0.1:${port}`)
             this.setStatus({ state: 'running', url, error: null })
           } else {
             this.setStatus({
