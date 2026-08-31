@@ -3408,6 +3408,21 @@ function turnErrorText(message?: Record<string, unknown>): string | null {
   if (message.stopReason === 'aborted' && errorMessage && errorMessage !== GENERIC_ABORT_MESSAGE) {
     return errorMessage
   }
+  // A turn cut off at the output cap used to end in silence: the agent simply
+  // stopped mid-work with nothing in the transcript explaining why, which reads
+  // as the agent having hung or given up. It is neither — it ran out of output
+  // budget for that turn and the work resumes on the next one. Saying so is the
+  // difference between "this is broken" and "say continue".
+  //
+  // Spelled defensively because the field is provider-shaped: OpenAI-style
+  // backends report 'length', Anthropic-style 'max_tokens'.
+  if (message.stopReason === 'length' || message.stopReason === 'max_tokens') {
+    return (
+      'The turn stopped at the output limit, not because it finished. ' +
+      'Its work so far is above; say "continue" to pick up from there. ' +
+      'Raising maxTokens for this model in models.json makes it happen less often.'
+    )
+  }
   return null
 }
 
