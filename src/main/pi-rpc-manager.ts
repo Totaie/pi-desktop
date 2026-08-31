@@ -797,8 +797,12 @@ export class PiRpcManager extends EventEmitter {
         (captured ? `\n\nPi stderr captured during startup:\n${captured}` : '')
       )
     }
+    // Only reachable now when the child ALSO stopped running — a live but quiet
+    // engine is granted the engine-busy cap instead of being killed at the
+    // silence cap, so "no output" no longer implies broken stdio.
     return (
-      `Pi produced no output within ${this.startupTimeouts.silenceMs / MS_PER_SECOND}s.\n\n` +
+      `Pi produced no output and is no longer running (waited up to ` +
+      `${this.startupTimeouts.engineBusyMs / MS_PER_SECOND}s).\n\n` +
       (captured
         ? `Pi stderr captured during startup:\n${captured}`
         : 'No output captured. Check the app log for the exact spawn command, and try running `pi --mode rpc` directly in a terminal.')
@@ -944,7 +948,23 @@ export class PiRpcManager extends EventEmitter {
       // grant the rest of the engine-busy cap.
       silenceTimer = setTimeout(() => {
         if (settled || this.status !== 'starting') return
-        if (!this.startupSawOutput) {
+        // Silence is not the signal — LIVENESS is.
+        //
+        // Stage 1 assumed a quiet engine is a dead one, but a healthy engine is
+        // silent for exactly the same reason a broken one is: it has printed
+        // nothing yet. Pi runs every extension session_start hook before it
+        // reads stdin, so with a large package set and a local model server the
+        // first byte can be tens of seconds out — and the engine gets killed at
+        // the cap for doing nothing wrong. That is the "have to launch it twice"
+        // failure, and it gets worse the more packages are installed.
+        //
+        // A genuinely dead spawn does not reach here at all: an ENOENT, a spawn
+        // error or an early exit settles this promise through the crash path
+        // (which also retries). So if the child is still running, the only
+        // honest reading of silence is "busy", and it earns the same engine-busy
+        // grant as an engine that happened to print something first.
+        const alive = this.process !== null && this.process.exitCode === null && !this.process.killed
+        if (!this.startupSawOutput && !alive) {
           finish('timeout')
           return
         }

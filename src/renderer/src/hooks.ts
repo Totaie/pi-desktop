@@ -229,6 +229,11 @@ export function useChatScroll(active: boolean): {
   const sessionId = useAppStore((state) => state.sessionState?.sessionId ?? null)
   const messages = useAppStore((state) => state.messages)
   const streamingContent = useAppStore((state) => state.streamingContent)
+  // Thinking counts as growth too. Following only streamingContent meant a turn
+  // that opens with a long think — the normal shape on a reasoning model — grew
+  // the page without the view ever following it, so the thinking block streamed
+  // off-screen until the first token of real content arrived.
+  const streamingThinking = useAppStore((state) => state.streamingThinking)
   const scrollBottomNonce = useAppStore((state) => state.chatScrollBottomNonce)
 
   const positions = useRef<Map<string, ScrollAnchor>>(new Map())
@@ -245,6 +250,7 @@ export function useChatScroll(active: boolean): {
   // re-renders (e.g. re-showing the panel), so returning to chat doesn't scroll.
   const prevMsgCount = useRef(0)
   const prevStreamLen = useRef(0)
+  const prevThinkingLen = useRef(0)
 
   // Whether the viewport is at (or within a hair of) the bottom. `atBottom` (state)
   // drives the jump-to-bottom button; `atBottomRef` is read synchronously in the
@@ -291,9 +297,13 @@ export function useChatScroll(active: boolean): {
     // Did content actually grow (new message or streamed text)? Tracked even
     // while hidden so re-showing the panel isn't mistaken for new content.
     const messagesGrew = messages.length > prevMsgCount.current
-    const grew = messagesGrew || streamingContent.length > prevStreamLen.current
+    const grew =
+      messagesGrew ||
+      streamingContent.length > prevStreamLen.current ||
+      streamingThinking.length > prevThinkingLen.current
     prevMsgCount.current = messages.length
     prevStreamLen.current = streamingContent.length
+    prevThinkingLen.current = streamingThinking.length
 
     // Defer scrolling while hidden: a display:none element has no layout, so
     // scrollHeight is 0 and any positioning would be wrong.
@@ -369,7 +379,7 @@ export function useChatScroll(active: boolean): {
     }
 
     syncAtBottom()
-  }, [active, sessionId, messages, streamingContent, scrollBottomNonce, autoScroll, syncAtBottom])
+  }, [active, sessionId, messages, streamingContent, streamingThinking, scrollBottomNonce, autoScroll, syncAtBottom])
 
   return { scrollRef: ref, onScroll, atBottom, scrollToBottom }
 }

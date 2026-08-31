@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { clsx } from 'clsx'
-import { FolderOpen, MessageSquarePlus, PanelLeft, QrCode, Settings, X } from 'lucide-react'
+import { FolderOpen, FolderTree, GitCompare, MessageSquarePlus, PanelLeft, QrCode, Settings, ShieldCheck, X } from 'lucide-react'
 import { useAppStore } from '../store'
 import { useGlobalWorkflowOpen } from '../hooks'
 import { getSessionTitle } from '../utils/session-title'
@@ -187,7 +187,44 @@ export function ChatTabs(): React.JSX.Element {
         <FolderOpen size={15} />
       </button>
 
-      <div className="ml-auto flex shrink-0 items-center">
+      <div className="ml-auto flex shrink-0 items-center gap-0.5">
+        {/* Rehomed from the removed toolbar row. These three had no other
+            entry point — terminal has the status bar and the sidebar has its
+            own toggle, but review, files and diff would simply have become
+            unreachable. */}
+        <button
+          type="button"
+          onClick={() => useAppStore.getState().toggleReview()}
+          className="mb-1 flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-hover hover:text-primary"
+          title="Review panel"
+          aria-label="Review panel"
+        >
+          <ShieldCheck size={15} />
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            const state = useAppStore.getState()
+            void state.setChatSidePanel(state.chatSidePanel === 'files' ? null : 'files')
+          }}
+          className="mb-1 flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-hover hover:text-primary"
+          title="File tree"
+          aria-label="File tree"
+        >
+          <FolderTree size={15} />
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            const state = useAppStore.getState()
+            void state.setChatSidePanel(state.chatSidePanel === 'diff' ? null : 'diff')
+          }}
+          className="mb-1 flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-hover hover:text-primary"
+          title="Diff viewer"
+          aria-label="Diff viewer"
+        >
+          <GitCompare size={15} />
+        </button>
         <button
           type="button"
           onClick={() => setRemotePanelOpen(true)}

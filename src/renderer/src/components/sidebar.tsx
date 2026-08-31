@@ -10,14 +10,11 @@ import {
   Plus,
   PanelLeftClose,
   Clock,
-  Activity,
-  LayoutDashboard,
   Package,
   Layers,
   ChevronDown,
   Check,
   Trash2,
-  StickyNote,
   Archive,
   Sparkles,
   Stethoscope,
@@ -40,17 +37,6 @@ import type { SessionListItem } from '../../../shared/ipc-contracts'
 /** Views reachable from the sidebar's Tools group. */
 type ToolView = 'packages' | 'notes' | 'skills' | 'diagnostics' | 'settings'
 
-/**
- * Folder name for a workspace.
- *
- * Deliberately the path basename rather than `workspace.name`: the given name
- * is a leftover of the project layer, and two chats in the same folder should
- * read as the same place regardless of what that project was once called.
- */
-function directoryLabel(workspace: { name: string; path: string }): string {
-  return workspace.path.split(/[\\/]/).filter(Boolean).pop() || workspace.name
-}
-
 /** Cap how many workspace groups appear in the Recent list. */
 const MAX_RECENT_GROUPS = 12
 /** Cap sessions shown inside an expanded workspace group. */
@@ -72,16 +58,10 @@ export function Sidebar(): React.JSX.Element {
   const sessionRuntimes = useAppStore((state) => state.sessionRuntimes)
   const activeSessionRuntimeId = useAppStore((state) => state.activeSessionRuntimeId)
   const createNewSession = useAppStore((state) => state.createNewSession)
-  const setTaskLauncherOpen = useAppStore((state) => state.setTaskLauncherOpen)
   const openFolderAsWorkspace = useAppStore((state) => state.openFolderAsWorkspace)
   const openWorkflowRunsForSession = useAppStore((state) => state.openWorkflowRunsForSession)
-  const openWorkflowRunsForWorkspace = useAppStore((state) => state.openWorkflowRunsForWorkspace)
   const setWorkflowPanelOpen = useAppStore((state) => state.setWorkflowPanelOpen)
-  const workflowPanelOpen = useAppStore((state) => state.workflowPanelOpen)
-  const workflowPanelWorkspaceId = useAppStore((state) => state.workflowPanelWorkspaceId)
-  const workflowPanelFilter = useAppStore((state) => state.workflowPanelFilter)
   const globalWorkflowOpen = useGlobalWorkflowOpen()
-  const setSessionsScope = useAppStore((state) => state.setSessionsScope)
   const activeWorkspace = useAppStore((state) => state.activeWorkspace)
   const archivedSessions = useAppStore((state) => state.archivedSessions)
   const archiveSession = useAppStore((state) => state.archiveSession)
@@ -523,83 +503,20 @@ export function Sidebar(): React.JSX.Element {
         </div>
       </div>
 
-      {/* Navigation */}
-      <nav className="space-y-3 border-b border-border px-2 py-3">
-        <div>
-          <div className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-faint">Workspace</div>
-          <div className="space-y-0.5">
-            <SidebarItem
-              icon={<MessageSquare size={14} />}
-              label="Chat"
-              active={currentView === 'chat'}
-              onClick={() => setCurrentView('chat')}
-            />
-            {/* No "Sessions" entry: every open chat is already a tab, and the
-                full history is one click away under "Recent chats → View all".
-                A third place to reach the same conversations was the navigation
-                layer this fork exists to remove. */}
-            <SidebarItem
-              icon={<FolderOpen size={14} />}
-              label="All chats"
-              active={currentView === 'sessions'}
-              onClick={() => {
-                setSessionsScope('all')
-                setCurrentView('sessions')
-              }}
-              title="Every chat, in every folder"
-            />
-            <SidebarItem
-              icon={<Plus size={14} />}
-              label="New task"
-              active={false}
-              onClick={() => setTaskLauncherOpen(true)}
-              title="Start a task in a new Pi session"
-            />
-          </div>
-        </div>
-        <div>
-          <div className="mb-1 flex items-center gap-1 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-faint">
-            <span>Activity</span>
-            {activeWorkspace && (
-              <span className="min-w-0 truncate normal-case">· {activeWorkspace.name}</span>
-            )}
-          </div>
-          <div className="space-y-0.5">
-            <SidebarItem
-              icon={<LayoutDashboard size={14} />}
-              label="Mission Control"
-              active={currentView === 'mission-control'}
-              onClick={() => {
-                setWorkflowPanelOpen(false)
-                setCurrentView('mission-control')
-              }}
-              title="All background sessions and workflows"
-            />
-            <SidebarItem
-              icon={<WorkflowIcon size={14} />}
-              label="Workflows"
-              // Only highlighted when THIS project's scope is open, so it never
-              // fights the Tools' global "All Workflows" entry. With no project
-              // open the entry falls back to the global list (same as the old
-              // behavior) but stays unhighlighted.
-              active={
-                !!activeWorkspace &&
-                workflowPanelOpen &&
-                !workflowPanelFilter &&
-                workflowPanelWorkspaceId === activeWorkspace.id
-              }
-              onClick={() => openWorkflowRunsForWorkspace(activeWorkspace?.id ?? null)}
-              title={activeWorkspace ? `Workflow runs in ${activeWorkspace.name}` : 'All workflow runs (no project open)'}
-            />
-            <SidebarItem
-              icon={<Activity size={14} />}
-              label="Timeline"
-              active={currentView === 'timeline'}
-              onClick={() => setCurrentView('timeline')}
-              title={activeWorkspace ? `Timeline for ${activeWorkspace.name}` : 'Timeline'}
-            />
-          </div>
-        </div>
+      {/* Navigation.
+          One entry. Everything that used to live here — All chats, New task,
+          Mission Control, Workflows, Timeline — was a second way to reach
+          something already reachable: open chats are tabs, and the history is
+          the list directly below. A nav that mostly navigates to other navs is
+          the layer this fork exists to remove, so recents sit under Chat
+          separated by a rule rather than behind a section of their own. */}
+      <nav className="px-2 py-3">
+        <SidebarItem
+          icon={<MessageSquare size={14} />}
+          label="Chat"
+          active={currentView === 'chat'}
+          onClick={() => setCurrentView('chat')}
+        />
       </nav>
 
       {/* Current session info */}
@@ -650,23 +567,10 @@ export function Sidebar(): React.JSX.Element {
         )
       )}
 
-      {/* Recent sessions for the active project. Cross-project history stays in Sessions. */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
-        <div className="mb-1 flex items-center justify-between px-2">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-faint">
-            {activeWorkspace ? `Recent in ${directoryLabel(activeWorkspace)}` : 'Recent chats'}
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              setSessionsScope('all')
-              setCurrentView('sessions')
-            }}
-            className="text-[11px] text-muted transition-colors hover:text-accent-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-focus"
-          >
-            View all
-          </button>
-        </div>
+      {/* Recent chats in the current folder, directly under Chat. The rule
+          above is the only separation the list gets — a heading naming the
+          folder would repeat what every row already says. */}
+      <div className="min-h-0 flex-1 overflow-y-auto border-t border-border px-2 py-3">
         {activeWorkspace ? (
           recentSessionsForWorkspace.length === 0 ? (
             <div className="mx-2 mt-2 rounded-lg border border-dashed border-border px-3 py-4 text-center text-xs text-faint">
@@ -729,13 +633,6 @@ export function Sidebar(): React.JSX.Element {
           />
           <SidebarItem
             compact
-            icon={<StickyNote size={13} />}
-            label="Notes"
-            active={toolViewShowing('notes')}
-            onClick={() => openToolView('notes')}
-          />
-          <SidebarItem
-            compact
             icon={<Sparkles size={13} />}
             label="Skills"
             active={toolViewShowing('skills')}
@@ -747,18 +644,6 @@ export function Sidebar(): React.JSX.Element {
             label="Diagnostics"
             active={toolViewShowing('diagnostics')}
             onClick={() => openToolView('diagnostics')}
-          />
-          {/* Global workflow list lives here — "browse everything" territory —
-              so the Activity section stays scoped to the current project. */}
-          <SidebarItem
-            compact
-            icon={<WorkflowIcon size={13} />}
-            label="All Workflows"
-            // Highlighted only when the global scope is open (never alongside
-            // the Activity entry, whose active state requires a workspace id).
-            active={globalWorkflowOpen}
-            onClick={() => openWorkflowRunsForWorkspace(null)}
-            title="Workflow runs from every project"
           />
           <SidebarItem
             compact

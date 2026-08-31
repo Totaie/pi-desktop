@@ -8,6 +8,12 @@ import { Brain, Loader2 } from 'lucide-react'
 import { PixelLoader } from './pixel-loader'
 import { clsx } from 'clsx'
 
+/**
+ * How close to the bottom counts as "still following" when the reader stops
+ * scrolling. Generous, because the tail keeps moving underneath them.
+ */
+const THINKING_TAIL_THRESHOLD_PX = 24
+
 interface StreamingBubbleProps {
   content: string
   thinking: string
@@ -31,15 +37,29 @@ export function StreamingBubble({ content, thinking, toolCalls }: StreamingBubbl
   )
   const thinkingScrollRef = useRef<HTMLDivElement>(null)
 
-  // Follow the thinking tail only when the user is already at/near the bottom,
-  // so scrolling up mid-stream to re-read is not yanked back down.
-  useEffect(() => {
+  // Whether the thinking pane should keep following its tail. Sticky INTENT,
+  // remembered across renders — not re-derived from scroll position on every
+  // chunk.
+  //
+  // The old check measured "am I within 48px of the bottom?" after each chunk
+  // had already been appended. While thinking streams fast the tail moves
+  // further every frame, so a small scroll-up left the reader inside that 48px
+  // window and the next chunk snapped them straight back down: scrolling up to
+  // re-read was impossible unless you outran the model. Intent is set by the
+  // reader (scrolling away turns following off, returning to the bottom turns
+  // it back on) and nothing else may revoke it.
+  const followThinking = useRef(true)
+
+  const onThinkingScroll = (): void => {
     const el = thinkingScrollRef.current
     if (!el) return
-    const distanceFromBottom = el.scrollHeight - el.clientHeight - el.scrollTop
-    if (distanceFromBottom <= 48) {
-      el.scrollTop = el.scrollHeight
-    }
+    followThinking.current = el.scrollHeight - el.clientHeight - el.scrollTop <= THINKING_TAIL_THRESHOLD_PX
+  }
+
+  useEffect(() => {
+    const el = thinkingScrollRef.current
+    if (!el || !followThinking.current) return
+    el.scrollTop = el.scrollHeight
   }, [thinking])
 
   return (
@@ -57,6 +77,7 @@ export function StreamingBubble({ content, thinking, toolCalls }: StreamingBubbl
               </div>
               <div
                 ref={thinkingScrollRef}
+                onScroll={onThinkingScroll}
                 className="max-h-36 min-w-0 overflow-x-hidden overflow-y-auto"
               >
                 <div className="markdown-body font-sans italic text-sm text-muted break-words [overflow-wrap:anywhere] whitespace-pre-wrap">

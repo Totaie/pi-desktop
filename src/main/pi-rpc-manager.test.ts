@@ -299,6 +299,7 @@ const SKIP_ON_WINDOWS = { skip: process.platform === 'win32' ? 'POSIX shebang fi
  *  - 'late-ready' — emits frames immediately, answers the probe only after
  *                   FAKE_PI_READY_DELAY_MS.
  *  - 'never-ready' — emits frames forever, never answers the probe.
+ *  - 'dies'        — exits immediately, the one genuinely-dead spawn.
  */
 const FAKE_ENGINE_SOURCE = `#!/usr/bin/env node
 const mode = process.env.FAKE_PI_MODE || 'silent'
@@ -311,6 +312,7 @@ if (mode !== 'silent') {
     setTimeout(() => emit({ id: '${PROBE_ID}', type: 'response', command: 'get_state', success: true }), readyDelayMs)
   }
 }
+if (mode === 'dies') process.exit(3)
 process.stdin.resume()
 `
 
@@ -354,20 +356,36 @@ test('startup keeps waiting past the silence cap while Pi is emitting output', S
   }, { FAKE_PI_MODE: 'late-ready', FAKE_PI_READY_DELAY_MS: String(LATE_READY_DELAY_MS) })
 })
 
-test('a silent Pi still fails fast at the silence cap', SKIP_ON_WINDOWS, async () => {
+test('a silent but LIVE Pi is granted the engine-busy cap, not killed for being quiet', SKIP_ON_WINDOWS, async () => {
+  // The regression that made the app need launching twice. Pi runs every
+  // extension session_start hook before it reads stdin, so with a large package
+  // set against a local model server the first byte can be tens of seconds out.
+  // Silence alone therefore proves nothing, and killing on it kills healthy
+  // engines — the more packages installed, the more often.
+  await withFakeEngine(async (manager, env) => {
+    const startedAt = Date.now()
+    const status = await manager.start({ env })
+    assert.equal(status.status, 'error', 'it still fails eventually — this is a cap, not a removal')
+    assert.ok(
+      Date.now() - startedAt >= TEST_ENGINE_BUSY_MS - HEARTBEAT_MS,
+      'a living engine gets the full engine-busy cap even having printed nothing',
+    )
+    assert.doesNotMatch(status.error ?? '', /shell:true|waiting on input/)
+  }, { FAKE_PI_MODE: 'silent' })
+})
+
+test('a spawn that dies still fails without waiting out the engine-busy cap', SKIP_ON_WINDOWS, async () => {
+  // The case the silence cap was actually protecting against. Liveness, not
+  // silence, is what separates it from the test above.
   await withFakeEngine(async (manager, env) => {
     const startedAt = Date.now()
     const status = await manager.start({ env })
     assert.equal(status.status, 'error')
-    assert.match(status.error ?? '', /produced no output within 0\.4s/)
-    // The old message asserted two specific causes that misdiagnosed issue
-    // #58 for days; the error must not name them any more.
-    assert.doesNotMatch(status.error ?? '', /shell:true|waiting on input/)
     assert.ok(
       Date.now() - startedAt < TEST_ENGINE_BUSY_MS,
-      'silence must not inherit the long engine-busy cap',
+      'a dead child must not inherit the long cap',
     )
-  }, { FAKE_PI_MODE: 'silent' })
+  }, { FAKE_PI_MODE: 'dies' })
 })
 
 test('a chatty but never-ready Pi fails at the engine-busy cap with an engine-busy error', SKIP_ON_WINDOWS, async () => {
