@@ -17,6 +17,7 @@ import { trimGetMessagesResponse } from '../get-messages-trim'
 import { activityStatsStore } from '../activity-stats'
 import type { SessionDeleteResult, SessionListItem, SessionRuntimeCloseResult, SessionRuntimeInfo } from '../../shared/ipc-contracts'
 import { IPC_CHANNELS } from '../../shared/ipc-contracts'
+import { readSessionFileMessages } from '../session-file-messages'
 import { readdir, stat, unlink } from 'fs/promises'
 import { basename, join, resolve } from 'path'
 import { existsSync } from 'fs'
@@ -209,6 +210,11 @@ export function registerSessionHandlers(ctx: IpcContext): void {
     const pi = workspaceManager.getActivePiManager()
     if (!pi || pi.getStatus().status !== 'running') return null
     return pi.sendCommand({ type: 'get_state' })
+  })
+
+  ipcMain.handle(IPC_CHANNELS.SESSION_READ_FILE_MESSAGES, async (_event, sessionPath: unknown) => {
+    if (!isString(sessionPath)) throw new Error('sessionPath must be a string')
+    return readSessionFileMessages(sessionPath)
   })
 
   ipcMain.handle(IPC_CHANNELS.SESSION_GET_MESSAGES, async () => {

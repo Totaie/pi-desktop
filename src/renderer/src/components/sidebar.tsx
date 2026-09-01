@@ -1,5 +1,4 @@
-import { useAppStore, countPromptsWaitingElsewhere, formatPromptsWaiting } from '../store'
-import { summarizeBackgroundActivity, workspaceActivityIndicator } from './sidebar-activity'
+import { useAppStore } from '../store'
 import { pathGroupKey, pathsEqual } from '../../../shared/path-compare'
 import { clsx } from 'clsx'
 import {
@@ -7,18 +6,13 @@ import {
   MessageSquare,
   Settings,
   FolderOpen,
-  Plus,
   PanelLeftClose,
   Clock,
   Package,
-  Layers,
   ChevronDown,
-  Check,
-  Trash2,
   Archive,
   Sparkles,
   Stethoscope,
-  Pencil,
   Workflow as WorkflowIcon,
 } from 'lucide-react'
 import { useMemo, useState, useRef } from 'react'
@@ -26,7 +20,6 @@ import { StatusPopover } from './status-popover'
 import { useContextMenu, buildSessionContextMenu } from './context-menu'
 import { getSessionEngineLabel, getSessionRowLabels, hasMixedSessionEngines } from './sidebar-session-labels'
 import { ResizeHandle } from './resize-handle'
-import { findSessionPreview, getSessionTitle } from '../utils/session-title'
 import { formatRelativeTime } from '../utils/format-relative-time'
 import { SessionRuntimeIndicator } from './session-runtime-indicator'
 import { resolveRunSessionId } from '../utils/workflow-runs'
@@ -58,7 +51,6 @@ export function Sidebar(): React.JSX.Element {
   const sessionRuntimes = useAppStore((state) => state.sessionRuntimes)
   const activeSessionRuntimeId = useAppStore((state) => state.activeSessionRuntimeId)
   const createNewSession = useAppStore((state) => state.createNewSession)
-  const openFolderAsWorkspace = useAppStore((state) => state.openFolderAsWorkspace)
   const openWorkflowRunsForSession = useAppStore((state) => state.openWorkflowRunsForSession)
   const setWorkflowPanelOpen = useAppStore((state) => state.setWorkflowPanelOpen)
   const globalWorkflowOpen = useGlobalWorkflowOpen()
@@ -217,11 +209,6 @@ export function Sidebar(): React.JSX.Element {
   // The live session state has no preview, so the Current Session panel would
   // fall back to the raw id while the same session's Recent row shows its first
   // message. Both read the same preview instead.
-  const currentSessionPreview = useMemo(
-    () => findSessionPreview(sessionList, sessionState?.sessionFile),
-    [sessionList, sessionState?.sessionFile]
-  )
-
   // Gated on every known session, not on one section's slice, so the same chat
   // carries the same tag in Recent, in a folder group and under Archived.
   const showEngineTags = useMemo(() => hasMixedSessionEngines(sessionList), [sessionList])
@@ -241,11 +228,6 @@ export function Sidebar(): React.JSX.Element {
     }
     setCurrentView('chat')
     await createNewSession()
-  }
-
-  const openProject = async (): Promise<void> => {
-    const path = await window.piDesktop.system.openDialog({ title: 'Open Project' })
-    if (path) await openFolderAsWorkspace(path)
   }
 
   // A tool view is only "showing" when nothing covers it — the global workflow
@@ -288,18 +270,6 @@ export function Sidebar(): React.JSX.Element {
 
   // Right-click menu for the Current Session panel — same active session, so
   // just the rename affordance.
-  const handleCurrentSessionRightClick = (e: React.MouseEvent): void => {
-    e.nativeEvent.stopPropagation()
-    showMenu(e, [
-      {
-        id: 'current-session-rename',
-        label: 'Rename…',
-        icon: <Pencil size={14} />,
-        action: () => startSessionRename('current'),
-      },
-    ])
-  }
-
   const renderSessionRow = (
     session: SessionListItem,
     options?: { nested?: boolean }
@@ -470,39 +440,11 @@ export function Sidebar(): React.JSX.Element {
         </button>
       </div>
 
-      {/* Project + primary action */}
-      <div className="border-b border-border pb-3">
-        <div className="flex items-center justify-between px-3 pt-3">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-faint">Project</div>
-          <button
-            type="button"
-            onClick={() => void openProject()}
-            className="rounded p-1 text-muted transition-colors hover:bg-highlight hover:text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-focus"
-            title="Open project folder (Ctrl/Cmd+O)"
-            aria-label="Open project folder"
-          >
-            <FolderOpen size={14} />
-          </button>
-        </div>
-        <WorkspaceSwitcher onOpenProject={() => void openProject()} />
-        <div className="px-3">
-          <button
-            type="button"
-            onClick={() => void startNewSession()}
-            disabled={!activeWorkspace}
-            className="group flex w-full items-center gap-2 rounded-lg bg-accent px-3 py-2.5 text-sm font-medium text-white shadow-sm shadow-accent/20 transition-colors hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus disabled:cursor-not-allowed disabled:opacity-50"
-            title={activeWorkspace ? 'Start a new session in this project (Ctrl/Cmd+N)' : 'Open a project first'}
-          >
-            <Plus size={15} className="shrink-0 transition-transform group-hover:rotate-90" />
-            <span className="flex-1 text-left">New session</span>
-            <kbd className="rounded border border-white/20 bg-white/10 px-1.5 py-0.5 text-[10px] font-medium text-white/75">Ctrl N</kbd>
-          </button>
-          <div className="mt-1.5 px-1 text-[11px] text-faint">
-            {activeWorkspace ? `Starts in ${activeWorkspace.name}` : 'Open a project to begin'}
-          </div>
-        </div>
-      </div>
-
+      {/* No Project header, no New session button, no Current Session card.
+          The folder a chat runs in is chosen in the composer now, each open
+          chat is a tab, and the tab plus the composer already say which
+          session and folder are live — three headers restating that is the
+          chrome this fork keeps removing. */}
       {/* Navigation.
           One entry. Everything that used to live here — All chats, New task,
           Mission Control, Workflows, Timeline — was a second way to reach
@@ -518,54 +460,6 @@ export function Sidebar(): React.JSX.Element {
           onClick={() => setCurrentView('chat')}
         />
       </nav>
-
-      {/* Current session info */}
-      {sessionState && (
-        renamingWhere === 'current' ? (
-          <div className="mx-3 mt-2 rounded-md bg-surface p-3">
-            <div className="text-xs font-medium text-muted uppercase tracking-wider">Current Session</div>
-            <div className="mt-1.5 flex">{renderRenameInput()}</div>
-            {sessionState.model && (
-              <div className="mt-1 text-xs text-dim">{sessionState.model.name}</div>
-            )}
-            <div className="mt-1 text-xs text-dim">{sessionState.messageCount} messages</div>
-          </div>
-        ) : (
-          <div className="group relative mx-3 mt-2">
-            <button
-              type="button"
-              onClick={() => setCurrentView('chat')}
-              onDoubleClick={() => startSessionRename('current')}
-              onContextMenu={handleCurrentSessionRightClick}
-              className="w-full rounded-md bg-surface p-3 pr-9 text-left transition-colors hover:bg-surface-hover focus:outline-none focus:ring-1 focus:ring-border-strong"
-              title="Open current session in chat · double-click to rename"
-            >
-              <div className="text-xs font-medium text-muted uppercase tracking-wider">Current Session</div>
-              <div className="mt-1.5 text-sm text-primary truncate">
-                {getSessionTitle(sessionState.sessionName, sessionState.sessionId, currentSessionPreview)}
-              </div>
-              {sessionState.model && (
-                <div className="mt-1 text-xs text-dim">
-                  {sessionState.model.name}
-                </div>
-              )}
-              <div className="mt-1 text-xs text-dim">
-                {sessionState.messageCount} messages
-              </div>
-            </button>
-            {/* Sibling overlay — the panel above stays a single non-nested button. */}
-            <button
-              type="button"
-              onClick={() => openWorkflowRunsForSession(sessionState.sessionId)}
-              className="absolute right-2 top-3 rounded p-1.5 text-faint opacity-0 transition-opacity hover:bg-highlight hover:text-accent-fg focus-visible:opacity-100 group-hover:opacity-100"
-              title="Workflow runs for this session"
-              aria-label="Workflow runs for this session"
-            >
-              <WorkflowIcon size={13} />
-            </button>
-          </div>
-        )
-      )}
 
       {/* Recent chats in the current folder, directly under Chat. The rule
           above is the only separation the list gets — a heading naming the
@@ -661,228 +555,6 @@ export function Sidebar(): React.JSX.Element {
       onResizeEnd={() => void saveSidebarWidth(widthRef.current)}
     />
     </>
-  )
-}
-
-// ─── Workspace Switcher ──────────────────────────────────────────────────────
-
-function WorkspaceSwitcher({ onOpenProject }: { onOpenProject: () => void }): React.JSX.Element {
-  const workspaces = useAppStore((state) => state.workspaces)
-  const activeWorkspace = useAppStore((state) => state.activeWorkspace)
-  const activateWorkspace = useAppStore((state) => state.activateWorkspace)
-  const removeWorkspace = useAppStore((state) => state.removeWorkspace)
-  const renameWorkspace = useAppStore((state) => state.renameWorkspace)
-  const changeWorkspaceFolder = useAppStore((state) => state.changeWorkspaceFolder)
-  const pendingPromptCounts = useAppStore((state) => state.pendingPromptCounts)
-  const workspaceActivity = useAppStore((state) => state.workspaceActivity)
-  const { show: showContextMenu, ContextMenuComponent: WorkspaceContextMenu } = useContextMenu()
-
-  // Prompts held for workspaces other than the active one — the active
-  // workspace's prompt is already on screen, so only elsewhere needs a badge.
-  const promptsWaitingElsewhere = countPromptsWaitingElsewhere(
-    pendingPromptCounts,
-    activeWorkspace?.id ?? null
-  )
-
-  // Background work in non-active workspaces, condensed to one header dot.
-  const backgroundActivity = summarizeBackgroundActivity(
-    workspaceActivity,
-    activeWorkspace?.id ?? null
-  )
-
-  const [isOpen, setIsOpen] = useState(false)
-  const [isRenaming, setIsRenaming] = useState(false)
-  const [newName, setNewName] = useState('')
-
-  const handleRename = async () => {
-    if (!activeWorkspace || !newName.trim()) return
-    await renameWorkspace(activeWorkspace.id, newName.trim())
-    setIsRenaming(false)
-  }
-
-  const startRenaming = () => {
-    setNewName(activeWorkspace?.name ?? '')
-    setIsRenaming(true)
-    setIsOpen(false)
-  }
-
-  const handleChangeFolder = async () => {
-    if (!activeWorkspace) return
-    const path = await window.piDesktop.system.openDialog({ title: 'Select Workspace Folder' })
-    if (path) await changeWorkspaceFolder(activeWorkspace.id, path)
-  }
-
-  const handleWorkspaceContextMenu = (e: React.MouseEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    showContextMenu(e, [
-      {
-        id: 'rename',
-        label: 'Rename',
-        icon: <Pencil size={14} />,
-        disabled: !activeWorkspace,
-        action: startRenaming,
-      },
-      {
-        id: 'change-folder',
-        label: 'Change folder…',
-        icon: <FolderOpen size={14} />,
-        disabled: !activeWorkspace,
-        action: () => {
-          void handleChangeFolder()
-        },
-      },
-    ])
-  }
-
-  return (
-    <div className="px-3 py-2">
-      {/* Current workspace */}
-      {isRenaming ? (
-        <div className="flex items-center gap-2 rounded-md bg-surface px-3 py-2">
-          <Layers size={14} style={{ color: activeWorkspace?.color ?? '#6b7280' }} />
-          <input
-            type="text"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                handleRename()
-              } else if (e.key === 'Escape') {
-                setIsRenaming(false)
-              }
-            }}
-            onBlur={handleRename}
-            placeholder="Workspace name"
-            className="min-w-0 flex-1 rounded border border-border-strong bg-card px-2 py-1 text-sm text-primary placeholder:text-faint focus:border-focus focus:outline-none"
-            autoFocus
-          />
-        </div>
-      ) : (
-        <button
-          onClick={() => setIsOpen(!isOpen)}
-          onDoubleClick={startRenaming}
-          onContextMenu={handleWorkspaceContextMenu}
-          title="Click to switch · double-click to rename · right-click for options"
-          className="flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-primary hover:bg-surface-hover transition-colors"
-        >
-          <div className="flex min-w-0 items-center gap-2 text-left">
-            <Layers size={14} className="shrink-0" style={{ color: activeWorkspace?.color ?? '#6b7280' }} />
-            <div className="min-w-0">
-              <div className="truncate text-sm">{activeWorkspace?.name ?? 'No workspace'}</div>
-              {activeWorkspace && (
-                <div className="truncate text-[10px] text-faint">{activeWorkspace.path}</div>
-              )}
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            {backgroundActivity && (
-              <span
-                className={clsx(
-                  'h-2 w-2 rounded-full',
-                  backgroundActivity.colorClass,
-                  backgroundActivity.pulse && 'animate-pulse'
-                )}
-                title={backgroundActivity.label}
-              />
-            )}
-            {promptsWaitingElsewhere > 0 && (
-              <span
-                className="rounded bg-warning-bg px-1.5 py-0.5 text-[10px] text-warning"
-                title={`${formatPromptsWaiting(promptsWaitingElsewhere)} in other workspaces`}
-              >
-                {promptsWaitingElsewhere}
-              </span>
-            )}
-            <ChevronDown
-              size={14}
-              className={clsx(
-                'text-dim transition-transform',
-                isOpen && 'rotate-180'
-              )}
-            />
-          </div>
-        </button>
-      )}
-      {WorkspaceContextMenu}
-
-      {/* Dropdown */}
-      {isOpen && (
-        <div className="mt-1 rounded-md border border-border bg-surface py-1 animate-fade-in">
-          {/* Workspace list */}
-          {workspaces.map((ws) => (
-            <div
-              key={ws.id}
-              className="group flex items-center justify-between px-3 py-1.5 hover:bg-surface-hover"
-            >
-              <button
-                onClick={() => {
-                  void activateWorkspace(ws.id)
-                  setIsOpen(false)
-                }}
-                className="flex items-center gap-2 min-w-0 flex-1 text-left"
-              >
-                <div
-                  className="h-2 w-2 rounded-full shrink-0"
-                  style={{ backgroundColor: ws.color }}
-                />
-                <span className="text-sm text-secondary truncate">{ws.name}</span>
-                {ws.id === activeWorkspace?.id && (
-                  <Check size={12} className="shrink-0 text-success" />
-                )}
-                {ws.id !== activeWorkspace?.id && (pendingPromptCounts[ws.id] ?? 0) > 0 && (
-                  <span
-                    className="shrink-0 rounded bg-warning-bg px-1.5 py-0.5 text-[10px] text-warning"
-                    title={formatPromptsWaiting(pendingPromptCounts[ws.id])}
-                  >
-                    {pendingPromptCounts[ws.id]}
-                  </span>
-                )}
-                {(() => {
-                  const indicator = workspaceActivityIndicator(workspaceActivity[ws.id])
-                  return indicator ? (
-                    <span
-                      className={clsx(
-                        'h-2 w-2 shrink-0 rounded-full',
-                        indicator.colorClass,
-                        indicator.pulse && 'animate-pulse'
-                      )}
-                      title={indicator.label}
-                    />
-                  ) : null
-                })()}
-              </button>
-              {workspaces.length > 1 && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    removeWorkspace(ws.id)
-                  }}
-                  className="rounded p-1 text-faint opacity-0 group-hover:opacity-100 hover:text-error transition-all"
-                  title="Remove workspace"
-                  aria-label="Remove workspace"
-                >
-                  <Trash2 size={12} />
-                </button>
-              )}
-            </div>
-          ))}
-
-          <button
-            type="button"
-            onClick={() => {
-              setIsOpen(false)
-              onOpenProject()
-            }}
-            className="flex w-full items-center gap-2 border-t border-border px-3 py-2 text-xs text-muted transition-colors hover:bg-surface-hover hover:text-secondary"
-          >
-            <FolderOpen size={12} />
-            Open project…
-          </button>
-        </div>
-      )}
-    </div>
   )
 }
 

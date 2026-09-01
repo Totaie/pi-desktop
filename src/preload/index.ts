@@ -110,6 +110,8 @@ interface PiDesktopAPI {
     listAll(cwd?: string): Promise<SessionListItem[]>
     getState(): Promise<unknown>
     getMessages(): Promise<unknown>
+    /** History read off disk; works with no engine running. */
+    readFileMessages(sessionPath: string): Promise<unknown>
     getStats(): Promise<unknown>
     setName(name: string): Promise<unknown>
     exportHtml(outputPath?: string): Promise<unknown>
@@ -384,6 +386,7 @@ const api: PiDesktopAPI = {
     listAll: (cwd) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_LIST_ALL, cwd),
     getState: () => ipcRenderer.invoke(IPC_CHANNELS.SESSION_GET_STATE),
     getMessages: () => ipcRenderer.invoke(IPC_CHANNELS.SESSION_GET_MESSAGES),
+    readFileMessages: (sessionPath) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_READ_FILE_MESSAGES, sessionPath),
     getStats: () => ipcRenderer.invoke(IPC_CHANNELS.SESSION_GET_STATS),
     setName: (name) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_SET_NAME, name),
     exportHtml: (outputPath) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_EXPORT_HTML, outputPath),

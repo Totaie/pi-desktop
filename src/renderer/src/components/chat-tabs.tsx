@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { clsx } from 'clsx'
-import { FolderOpen, FolderTree, GitCompare, MessageSquarePlus, PanelLeft, QrCode, Settings, ShieldCheck, X } from 'lucide-react'
+import { FolderOpen, MessageSquarePlus, PanelLeft, Settings, X } from 'lucide-react'
 import { useAppStore } from '../store'
 import { useGlobalWorkflowOpen } from '../hooks'
 import { getSessionTitle } from '../utils/session-title'
@@ -34,6 +34,10 @@ export function ChatTabs(): React.JSX.Element {
   const workspaces = useAppStore((state) => state.workspaces)
   const sessionList = useAppStore((state) => state.sessionList)
   const activeSessionRuntimeId = useAppStore((state) => state.activeSessionRuntimeId)
+  // Selection can lead the engine: a chat is highlighted the moment it is
+  // clicked, while the engine only follows on the first send.
+  const selectedChatRuntimeId = useAppStore((state) => state.selectedChatRuntimeId)
+  const shownRuntimeId = selectedChatRuntimeId ?? activeSessionRuntimeId
   const sidebarOpen = useAppStore((state) => state.sidebarOpen)
   const toggleSidebar = useAppStore((state) => state.toggleSidebar)
   const currentView = useAppStore((state) => state.currentView)
@@ -42,7 +46,6 @@ export function ChatTabs(): React.JSX.Element {
   const openChat = useAppStore((state) => state.openChat)
   const closeSessionTab = useAppStore((state) => state.closeSessionTab)
   const createChatInDirectory = useAppStore((state) => state.createChatInDirectory)
-  const setRemotePanelOpen = useAppStore((state) => state.setRemotePanelOpen)
   const globalWorkflowOpen = useGlobalWorkflowOpen()
 
   const toolView = ['settings', 'packages', 'notes', 'skills', 'diagnostics'] as const
@@ -86,7 +89,7 @@ export function ChatTabs(): React.JSX.Element {
 
       {chats.map((runtime) => {
         const workspace = workspaceById.get(runtime.workspaceId)
-        const active = !toolsActive && runtime.runtimeId === activeSessionRuntimeId
+        const active = !toolsActive && runtime.runtimeId === shownRuntimeId
         const folder = directoryLabel(workspace)
         return (
           <div
@@ -187,58 +190,10 @@ export function ChatTabs(): React.JSX.Element {
         <FolderOpen size={15} />
       </button>
 
-      <div className="ml-auto flex shrink-0 items-center gap-0.5">
-        {/* Rehomed from the removed toolbar row. These three had no other
-            entry point — terminal has the status bar and the sidebar has its
-            own toggle, but review, files and diff would simply have become
-            unreachable. */}
-        <button
-          type="button"
-          onClick={() => useAppStore.getState().toggleReview()}
-          className="mb-1 flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-hover hover:text-primary"
-          title="Review panel"
-          aria-label="Review panel"
-        >
-          <ShieldCheck size={15} />
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            const state = useAppStore.getState()
-            void state.setChatSidePanel(state.chatSidePanel === 'files' ? null : 'files')
-          }}
-          className="mb-1 flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-hover hover:text-primary"
-          title="File tree"
-          aria-label="File tree"
-        >
-          <FolderTree size={15} />
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            const state = useAppStore.getState()
-            void state.setChatSidePanel(state.chatSidePanel === 'diff' ? null : 'diff')
-          }}
-          className="mb-1 flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-hover hover:text-primary"
-          title="Diff viewer"
-          aria-label="Diff viewer"
-        >
-          <GitCompare size={15} />
-        </button>
-        <button
-          type="button"
-          onClick={() => setRemotePanelOpen(true)}
-          className={clsx(
-            'mb-1 flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-xs transition-colors',
-            'text-muted hover:bg-surface-hover hover:text-primary'
-          )}
-          title="Show a QR code to reach this machine from your phone"
-          aria-label="Remote access"
-        >
-          <QrCode size={15} />
-          Remote
-        </button>
-      </div>
+      {/* Nothing on the right. The review, file-tree and diff toggles moved
+          here when the toolbar row went, and then went themselves: this row is
+          for chats. Remote lives in the status bar now, where a always-available
+          control belongs. */}
     </div>
   )
 }

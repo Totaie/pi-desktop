@@ -289,6 +289,15 @@ interface AppState {
   // Live Pi runtimes keyed by runtime id. Several can share one project cwd.
   sessionRuntimes: Record<string, SessionRuntimeInfo>
   activeSessionRuntimeId: string | null
+  /**
+   * The chat the UI is showing, which may run AHEAD of the engine.
+   *
+   * Selecting a chat only reads its history; the engine follows on the first
+   * send. So this is the tab that looks selected, while activeSessionRuntimeId
+   * stays on whatever the engine is actually attached to. Null means the two
+   * agree.
+   */
+  selectedChatRuntimeId: string | null
   forkMessages: ForkPoint[]
 
   // Messages
@@ -917,6 +926,7 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
   sessionStats: null,
   sessionList: [],
   sessionRuntimes: {},
+  selectedChatRuntimeId: null,
   remotePanelOpen: false,
   activeSessionRuntimeId: null,
   forkMessages: [],
@@ -1086,6 +1096,27 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
       return
     }
     if (trimmed.startsWith('/workflows run ')) get().setWorkflowPanelOpen(true)
+
+    // Selection ran ahead of the engine: this is the moment the user asked for
+    // this chat to become the live one, so do the switch that openChat
+    // deliberately skipped. Before the busy check, because that check is about
+    // the engine we are about to move to.
+    const selectedId = get().selectedChatRuntimeId
+    if (selectedId && selectedId !== get().activeSessionRuntimeId) {
+      const target = get().sessionRuntimes[selectedId]
+      if (target) {
+        if (target.workspaceId !== get().activeWorkspace?.id) {
+          const switched = await get().activateWorkspace(target.workspaceId)
+          // A refused switch is a real answer (the dirty-editor prompt was
+          // cancelled), so the prompt is not delivered somewhere else.
+          if (!switched) return
+        }
+        if (target.sessionPath) {
+          const cwd = get().workspaces.find((w) => w.id === target.workspaceId)?.path
+          await get().switchSession(target.sessionPath, cwd)
+        }
+      }
+    }
 
     // One engine at a time. If a different project is mid-turn, starting here
     // would quietly run a second Pi against a single-slot local server, so the
@@ -2401,6 +2432,12 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     }
     set((current) => ({
       sessionRuntimes: { ...current.sessionRuntimes, [runtime.runtimeId]: runtime },
+      // The engine has caught up with (or moved to) the shown chat: drop the
+      // override so selection and engine cannot silently diverge from here.
+      selectedChatRuntimeId:
+        runtime.active && runtime.runtimeId === current.selectedChatRuntimeId
+          ? null
+          : current.selectedChatRuntimeId,
       activeSessionRuntimeId: runtime.active
         ? runtime.runtimeId
         : current.activeSessionRuntimeId === runtime.runtimeId
@@ -2527,22 +2564,36 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     const runtime = get().sessionRuntimes[runtimeId]
     if (!runtime) return
     get().setCurrentView('chat')
+    set({ selectedChatRuntimeId: runtimeId })
 
-    // Already the live one: switching again would tear down and rebuild the
-    // session for no reason.
-    if (runtime.runtimeId === get().activeSessionRuntimeId) return
+    // Already the live one: its transcript is on screen and its engine is the
+    // one attached, so there is nothing to do.
+    if (runtimeId === get().activeSessionRuntimeId) return
 
-    if (runtime.workspaceId !== get().activeWorkspace?.id) {
-      const switched = await get().activateWorkspace(runtime.workspaceId)
-      // A refused switch is a real answer — the user cancelled the dirty-editor
-      // prompt — so do not then drag them into the session anyway.
-      if (!switched) return
-    }
-    // A chat whose agent has not written its session file yet has nothing to
-    // switch to; activating its directory is the whole job.
+    // Reading only. Selecting a chat must not spawn an engine, move the active
+    // workspace, or tear down the turn currently running elsewhere — that is
+    // what makes browsing free. The switch is deferred to sendPrompt, which is
+    // the moment the user actually asked for this chat to become live.
+    const gen = ++sessionLoadGeneration
+    get().clearMessages()
     if (!runtime.sessionPath) return
-    const cwd = get().workspaces.find((w) => w.id === runtime.workspaceId)?.path
-    await get().switchSession(runtime.sessionPath, cwd)
+
+    set({ sessionLoading: true })
+    try {
+      const response = await window.piDesktop.session.readFileMessages(runtime.sessionPath)
+      if (gen !== sessionLoadGeneration) return
+      const resp = response as { success?: boolean; data?: { messages?: unknown[] } } | null
+      if (resp?.success && resp.data?.messages) {
+        const loaded = await parseMessagesChunked(resp.data.messages, gen)
+        if (loaded === null || gen !== sessionLoadGeneration) return
+        set({ messages: loaded })
+      }
+    } catch {
+      // A history we cannot read is not a reason to refuse the selection; the
+      // chat opens empty and fills in when its engine starts on the first send.
+    } finally {
+      if (gen === sessionLoadGeneration) set({ sessionLoading: false })
+    }
   },
 
   createChatInDirectory: async (directory) => {

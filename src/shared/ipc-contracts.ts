@@ -46,6 +46,9 @@ export const IPC_CHANNELS = {
   SESSION_LIST_ALL: 'session:list-all',
   SESSION_GET_STATE: 'session:get-state',
   SESSION_GET_MESSAGES: 'session:get-messages',
+  // Read a session's history off disk, with no engine running. Lets a chat
+  // render its transcript before (or without) Pi being started for it.
+  SESSION_READ_FILE_MESSAGES: 'session:read-file-messages',
   SESSION_GET_STATS: 'session:get-stats',
   SESSION_SET_NAME: 'session:set-name',
   SESSION_EXPORT_HTML: 'session:export-html',

@@ -13,6 +13,7 @@ import {
   Loader2,
   GitBranch,
   Workflow as WorkflowIcon,
+  QrCode,
 } from 'lucide-react'
 
 export function StatusBar(): React.JSX.Element {
@@ -216,6 +217,18 @@ export function StatusBar(): React.JSX.Element {
           aria-label={terminalOpen ? 'Hide terminal' : 'Show terminal'}
         >
           <Terminal size={12} />
+        </button>
+
+        {/* Remote access. Bottom-right rather than the tab bar: it is available
+            in every chat and belongs to the machine, not to the chat you happen
+            to have open. Icon-only — the QR is the whole feature. */}
+        <button
+          onClick={() => useAppStore.getState().setRemotePanelOpen(true)}
+          className="rounded p-0.5 text-dim hover:text-secondary transition-colors"
+          title="Remote access — show a QR code to reach this machine from your phone"
+          aria-label="Remote access"
+        >
+          <QrCode size={12} />
         </button>
 
         {/* Settings */}

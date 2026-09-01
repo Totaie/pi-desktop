@@ -7,7 +7,7 @@ import { CommandResults } from './command-results'
 import { SubagentProgress } from './subagent-progress'
 import { ModelSelector } from './model-selector'
 import { ThinkingLevelSelector } from './thinking-level-selector'
-import { CornerDownLeft, Square, Paperclip, X, FileText, StickyNote, Users, Search } from 'lucide-react'
+import { CornerDownLeft, Square, Paperclip, X, FileText, StickyNote, Users, Search, FolderTree } from 'lucide-react'
 import {
   SUPPORTED_IMAGE_EXTENSIONS,
   type PromptImage,
@@ -86,6 +86,22 @@ export function ChatInput(): React.JSX.Element {
   const runCouncil = useAppStore((s) => s.runCouncil)
   const recordPrompt = useAppStore((s) => s.recordPrompt)
   const permissionMode = useAppStore((s) => s.settings?.permissionMode)
+  const activeWorkspace = useAppStore((s) => s.activeWorkspace)
+  const createChatInDirectory = useAppStore((s) => s.createChatInDirectory)
+
+  // Folder basename, not the workspace's given name: the name is a leftover of
+  // the project layer this fork removed.
+  const chatFolderLabel = activeWorkspace
+    ? activeWorkspace.path.split(/[\\/]/).filter(Boolean).pop() || activeWorkspace.path
+    : 'Choose folder'
+
+  // Changing the folder starts a chat in the new one rather than repointing the
+  // current chat: a session's transcript belongs to the directory it was run
+  // against, and moving it under a different cwd would silently invalidate every
+  // path already in it.
+  const changeChatFolder = useCallback(async () => {
+    await createChatInDirectory()
+  }, [createChatInDirectory])
   const setPermissionMode = useAppStore((s) => s.setPermissionMode)
   const toggleFileSearch = useAppStore((s) => s.toggleFileSearch)
 
@@ -631,6 +647,20 @@ export function ChatInput(): React.JSX.Element {
 
         <div className="font-chat flex items-center gap-0.5 px-1.5 pb-1.5 pt-0">
           <ComposerPermissionMenu value={permissionMode} onChange={setPermissionMode} />
+          {/* The folder this chat runs in, chosen where the chat is written
+              rather than from a Project header above it. It is the only thing a
+              chat is configured with, so it belongs next to the other
+              per-message control. */}
+          <button
+            onClick={() => void changeChatFolder()}
+            disabled={isDisabled}
+            className="hover:bg-highlight-strong flex max-w-[180px] items-center gap-1 rounded-md px-1.5 py-1 text-xs text-dim transition-colors hover:text-secondary disabled:opacity-50"
+            title={activeWorkspace ? `Running in ${activeWorkspace.path} — click to change` : 'Choose a folder for this chat'}
+            aria-label="Change the folder this chat runs in"
+          >
+            <FolderTree size={14} className="shrink-0" />
+            <span className="truncate">{chatFolderLabel}</span>
+          </button>
           <button
             onClick={handleAttachFile}
             disabled={isDisabled}
