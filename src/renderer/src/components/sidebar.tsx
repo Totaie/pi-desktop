@@ -13,6 +13,7 @@ import {
   Archive,
   Sparkles,
   Stethoscope,
+  HardDriveDownload,
   Workflow as WorkflowIcon,
 } from 'lucide-react'
 import { useMemo, useState, useRef } from 'react'
@@ -28,7 +29,7 @@ import { clampSidebarWidth, resolveSidebarWidth } from '../../../shared/sidebar-
 import type { SessionListItem } from '../../../shared/ipc-contracts'
 
 /** Views reachable from the sidebar's Tools group. */
-type ToolView = 'packages' | 'notes' | 'skills' | 'diagnostics' | 'settings'
+type ToolView = 'packages' | 'notes' | 'skills' | 'diagnostics' | 'settings' | 'stack'
 
 /** Cap how many workspace groups appear in the Recent list. */
 const MAX_RECENT_GROUPS = 12
@@ -538,6 +539,13 @@ export function Sidebar(): React.JSX.Element {
             label="Diagnostics"
             active={toolViewShowing('diagnostics')}
             onClick={() => openToolView('diagnostics')}
+          />
+          <SidebarItem
+            compact
+            icon={<HardDriveDownload size={13} />}
+            label="Stack"
+            active={toolViewShowing('stack')}
+            onClick={() => openToolView('stack')}
           />
           <SidebarItem
             compact

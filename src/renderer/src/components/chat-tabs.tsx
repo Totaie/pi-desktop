@@ -48,7 +48,7 @@ export function ChatTabs(): React.JSX.Element {
   const createChatInDirectory = useAppStore((state) => state.createChatInDirectory)
   const globalWorkflowOpen = useGlobalWorkflowOpen()
 
-  const toolView = ['settings', 'packages', 'notes', 'skills', 'diagnostics'] as const
+  const toolView = ['settings', 'packages', 'notes', 'skills', 'diagnostics', 'stack'] as const
   const toolsActive =
     toolView.includes(currentView as (typeof toolView)[number]) || globalWorkflowOpen
 

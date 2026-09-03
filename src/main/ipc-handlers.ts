@@ -22,6 +22,7 @@ import { registerFileHandlers } from './ipc/file-handlers'
 import { registerGitConveyorHandlers } from './ipc/git-conveyor-handlers'
 import { registerSystemHandlers } from './ipc/system-handlers'
 import { registerRemoteHandlers } from './ipc/remote-handlers'
+import { registerStackHandlers } from './ipc/stack-handlers'
 import { registerUpdateHandlers } from './ipc/update-handlers'
 import { registerDiagnosticsHandlers } from './ipc/diagnostics-handlers'
 import { registerWorkflowHandlers } from './ipc/workflow-handlers'
@@ -66,6 +67,7 @@ export function registerIpcHandlers(
   registerGitConveyorHandlers(ctx)
   registerSystemHandlers(ctx)
   registerRemoteHandlers(ctx)
+  registerStackHandlers(ctx)
   registerUpdateHandlers()
   registerDiagnosticsHandlers(ctx)
   registerWorkflowHandlers(ctx)

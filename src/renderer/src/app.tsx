@@ -18,6 +18,7 @@ import { ExtensionUiDialog, AppConfirmDialog } from './components/extension-ui-d
 import { ReviewRail } from './components/review-rail'
 import { ChatTabs } from './components/chat-tabs'
 import { RemotePanel } from './components/remote-panel'
+import { StackPanel } from './components/stack-panel'
 import { WorkflowNavigator } from './components/workflow-navigator'
 import { useContextMenu, buildDefaultContextMenu } from './components/context-menu'
 import { usePiEvents, useMenuActions, useInitialize, useNotePickerShortcut } from './hooks'
@@ -168,6 +169,7 @@ export function App(): React.JSX.Element {
                 {currentView === 'notes' && <NotesPanel />}
                 {currentView === 'skills' && <SkillsPanel />}
                 {currentView === 'diagnostics' && <DiagnosticsPanel />}
+                {currentView === 'stack' && <StackPanel />}
               </div>
               {globalWorkflowOpen && <WorkflowNavigator embedded />}
             </main>

@@ -69,6 +69,8 @@ import type {
   GitConveyorPullRequestOptions,
   GitConveyorPullRequestResult,
   RemoteStatus,
+  StackStatus,
+  StackActionEvent,
 } from '../shared/ipc-contracts'
 import type { ThemeFile } from '../shared/theme/theme-file'
 import { IPC_CHANNELS } from '../shared/ipc-contracts'
@@ -268,6 +270,20 @@ interface PiDesktopAPI {
     start(port?: number, relayPath?: string): Promise<RemoteStatus>
     stop(): Promise<RemoteStatus>
     status(): Promise<RemoteStatus>
+  }
+
+  // Stack maintenance: update llama.cpp, manage models, build/revert the app.
+  stack: {
+    status(): Promise<StackStatus>
+    updateLlama(tag?: string): Promise<{ code: number }>
+    downloadModel(repo: string, file: string, alias?: string): Promise<{ code: number }>
+    removeModel(name: string): Promise<{ code: number }>
+    buildApp(): Promise<{ code: number }>
+    revertApp(to?: string): Promise<{ code: number }>
+    snapshot(note?: string): Promise<{ code: number }>
+    restartServer(): Promise<{ code: number }>
+    /** Subscribe to streamed action output; returns an unsubscribe fn. */
+    onAction(cb: (event: StackActionEvent) => void): () => void
   }
 
   // System
@@ -528,6 +544,22 @@ const api: PiDesktopAPI = {
     start: (port, relayPath) => ipcRenderer.invoke(IPC_CHANNELS.REMOTE_START, { port, relayPath }),
     stop: () => ipcRenderer.invoke(IPC_CHANNELS.REMOTE_STOP),
     status: () => ipcRenderer.invoke(IPC_CHANNELS.REMOTE_STATUS),
+  },
+
+  stack: {
+    status: () => ipcRenderer.invoke(IPC_CHANNELS.STACK_STATUS),
+    updateLlama: (tag) => ipcRenderer.invoke(IPC_CHANNELS.STACK_UPDATE_LLAMA, tag),
+    downloadModel: (repo, file, alias) => ipcRenderer.invoke(IPC_CHANNELS.STACK_DOWNLOAD_MODEL, repo, file, alias),
+    removeModel: (name) => ipcRenderer.invoke(IPC_CHANNELS.STACK_REMOVE_MODEL, name),
+    buildApp: () => ipcRenderer.invoke(IPC_CHANNELS.STACK_BUILD_APP),
+    revertApp: (to) => ipcRenderer.invoke(IPC_CHANNELS.STACK_REVERT_APP, to),
+    snapshot: (note) => ipcRenderer.invoke(IPC_CHANNELS.STACK_SNAPSHOT, note),
+    restartServer: () => ipcRenderer.invoke(IPC_CHANNELS.STACK_RESTART_SERVER),
+    onAction: (cb) => {
+      const listener = (_e: unknown, event: StackActionEvent): void => cb(event)
+      ipcRenderer.on(IPC_CHANNELS.EVENT_STACK_ACTION, listener)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.EVENT_STACK_ACTION, listener)
+    },
   },
 
   system: {

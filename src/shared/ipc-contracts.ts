@@ -38,6 +38,16 @@ export const IPC_CHANNELS = {
   REMOTE_START: 'remote:start',
   REMOTE_STOP: 'remote:stop',
   REMOTE_STATUS: 'remote:status',
+
+  // Stack maintenance (shells out to local-stack's stack.ps1)
+  STACK_STATUS: 'stack:status',
+  STACK_UPDATE_LLAMA: 'stack:update-llama',
+  STACK_DOWNLOAD_MODEL: 'stack:download-model',
+  STACK_REMOVE_MODEL: 'stack:remove-model',
+  STACK_BUILD_APP: 'stack:build-app',
+  STACK_REVERT_APP: 'stack:revert-app',
+  STACK_SNAPSHOT: 'stack:snapshot',
+  STACK_RESTART_SERVER: 'stack:restart-server',
   SESSION_SWITCH: 'session:switch',
   SESSION_LIST_RUNTIMES: 'session:list-runtimes',
   SESSION_FORK: 'session:fork',
@@ -204,6 +214,7 @@ export const IPC_CHANNELS = {
   EVENT_TERMINAL_DATA: 'event:terminal-data',
   EVENT_TERMINAL_EXIT: 'event:terminal-exit',
   EVENT_COUNCIL_PROGRESS: 'event:council-progress',
+  EVENT_STACK_ACTION: 'event:stack-action',
 } as const
 
 // ─── Pi Process Types ───────────────────────────────────────────────────────
@@ -265,6 +276,24 @@ export interface RemoteRelayStatus {
  * The QR is only meaningful when both are up, so they are reported together
  * rather than leaving the UI to decide what a half-started pair means.
  */
+/** One streamed line (or lifecycle marker) from a stack.ps1 action. */
+export interface StackActionEvent {
+  action: string
+  phase: 'start' | 'output' | 'end' | 'error'
+  text?: string
+  code?: number
+}
+
+/** Structured snapshot of the local stack for the in-app Stack panel. */
+export interface StackStatus {
+  scriptFound: boolean
+  scriptPath: string | null
+  llama: { installed: string | null; reported: string | null; latest: string | null; mismatch: boolean }
+  builds: string[]
+  currentBuild: string | null
+  busy: boolean
+}
+
 export interface RemoteStatus {
   relay: RemoteRelayStatus
   tunnel: RemoteTunnelStatus
