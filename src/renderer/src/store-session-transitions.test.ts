@@ -1863,6 +1863,71 @@ test('returning to the live chat after a preview puts its own transcript back', 
   )
 })
 
+test('a new chat is not hijacked by a chat that was only being browsed', async () => {
+  // The reported bug, in order: browse a chat, start a NEW one, send. The
+  // deferred switch belonged to the browsed chat and outlived it, so the first
+  // message landed in whatever had been on screen a minute earlier.
+  workspaceListResult = [WORKSPACE_ONE, WORKSPACE_TWO]
+  activeWorkspaceResult = WORKSPACE_ONE
+  useAppStore.setState({
+    activeWorkspace: WORKSPACE_ONE,
+    workspaces: [WORKSPACE_ONE, WORKSPACE_TWO],
+  })
+
+  await useAppStore.getState().openSessionItem(sessionItemFor(WORKSPACE_TWO))
+  assert.equal(useAppStore.getState().selectedChat?.sessionPath, SESSION_PATH, 'browsing armed a switch')
+
+  await useAppStore.getState().createNewSession()
+  assert.equal(useAppStore.getState().selectedChat, null, 'a new chat cancels the browsed one')
+
+  calls.length = 0
+  await useAppStore.getState().sendPrompt('ship it')
+
+  assert.equal(
+    calls.some((c) => c.startsWith('switch:')),
+    false,
+    'the new chat is already the live one — nothing may switch away from it'
+  )
+  assert.equal(calls.some((c) => c.startsWith('prompt:')), true, 'the prompt still goes out')
+})
+
+test('the engine moving to a third chat cancels a pending selection', async () => {
+  // Same failure through the event path rather than createNewSession: whatever
+  // moved the engine, a selection that no longer describes anything on screen
+  // must not still be aimed at the next message.
+  useAppStore.setState({
+    activeWorkspace: WORKSPACE_ONE,
+    workspaces: [WORKSPACE_ONE],
+    activeSessionRuntimeId: 'rt-a',
+    selectedChat: { runtimeId: 'rt-b', sessionPath: '/tmp/browsed.jsonl', projectPath: WORKSPACE_ONE.path, projectName: WORKSPACE_ONE.name },
+  })
+
+  useAppStore.getState().handleSessionRuntime(
+    runtimeIn(WORKSPACE_ONE, { runtimeId: 'rt-c', sessionPath: '/tmp/third.jsonl', active: true })
+  )
+
+  assert.equal(useAppStore.getState().selectedChat, null)
+  assert.equal(useAppStore.getState().activeSessionRuntimeId, 'rt-c')
+})
+
+test('a status update from the live chat leaves a preview alone', async () => {
+  // The other half of the rule. Browsing must survive the chat behind it
+  // reporting progress, or a preview would evaporate mid-turn.
+  const browsing = { runtimeId: 'rt-b', sessionPath: '/tmp/browsed.jsonl', projectPath: WORKSPACE_ONE.path, projectName: WORKSPACE_ONE.name }
+  useAppStore.setState({
+    activeWorkspace: WORKSPACE_ONE,
+    workspaces: [WORKSPACE_ONE],
+    activeSessionRuntimeId: 'rt-a',
+    selectedChat: browsing,
+  })
+
+  useAppStore.getState().handleSessionRuntime(
+    runtimeIn(WORKSPACE_ONE, { runtimeId: 'rt-a', sessionPath: '/tmp/live.jsonl', active: true, activity: 'working' })
+  )
+
+  assert.deepEqual(useAppStore.getState().selectedChat, browsing)
+})
+
 test('switching into a working workspace shows the indicator and marks the attach', async () => {
   enterWorkspacesWithBackgroundTurn()
 

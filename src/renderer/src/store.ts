@@ -887,6 +887,31 @@ function selectionSatisfiedBy(
   )
 }
 
+/**
+ * What a pending selection becomes when this runtime event lands.
+ *
+ * Cleared when the engine reaches the selection — that is the whole point of
+ * deferring — and equally when the engine lands somewhere ELSE on purpose: a
+ * new chat, a direct session switch, a workspace change. The second case is
+ * the subtle one and it is a real bug, not a tidiness rule. A selection says
+ * "the next message goes here"; once the engine has moved to a third chat
+ * because the user asked it to, that promise is stale, and honouring it sends
+ * the message into whatever they happened to be reading a minute ago.
+ *
+ * A status update from the runtime that is ALREADY active is not a move and
+ * must change nothing, or a preview would evaporate the instant the chat
+ * behind it reported progress.
+ */
+function nextSelectedChat(
+  current: { selectedChat: SelectedChat | null; activeSessionRuntimeId: string | null },
+  runtime: SessionRuntimeInfo
+): SelectedChat | null {
+  if (!current.selectedChat) return null
+  if (selectionSatisfiedBy(current.selectedChat, runtime)) return null
+  if (runtime.active && runtime.runtimeId !== current.activeSessionRuntimeId) return null
+  return current.selectedChat
+}
+
 const PARSE_CHUNK = 50
 
 /** Parse history in chunks, yielding to the event loop so the UI can paint. */
@@ -1445,6 +1470,12 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
         currentView: 'chat',
         sessionState: null,
         sessionStats: null,
+        // This set moves activeSessionRuntimeId itself rather than waiting for
+        // a runtime event, so the event-level rule cannot cover the window in
+        // between. A chat the user was merely browsing must not survive into a
+        // chat they just created: leaving it would deliver their first message
+        // to the old one.
+        selectedChat: null,
         // A new session has no history to wait for. Show the empty chat
         // immediately; the runtime event hydrates its generated session path
         // when Pi is ready, while piStatus still communicates startup.
@@ -2582,14 +2613,7 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     }
     set((current) => ({
       sessionRuntimes: { ...current.sessionRuntimes, [runtime.runtimeId]: runtime },
-      // The engine has caught up with (or moved to) the shown chat: drop the
-      // override so selection and engine cannot silently diverge from here.
-      // Matched on the session file as well as the runtime id, because a
-      // selection made from the sidebar names a file and the runtime that ends
-      // up serving it is created afterwards.
-      selectedChat: selectionSatisfiedBy(current.selectedChat, runtime)
-        ? null
-        : current.selectedChat,
+      selectedChat: nextSelectedChat(current, runtime),
       activeSessionRuntimeId: runtime.active
         ? runtime.runtimeId
         : current.activeSessionRuntimeId === runtime.runtimeId

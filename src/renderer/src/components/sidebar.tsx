@@ -227,8 +227,13 @@ export function Sidebar(): React.JSX.Element {
   // changes in the composer; this only starts one.
   const startChatHere = async (): Promise<void> => {
     setWorkflowPanelOpen(false)
-    const current = useAppStore.getState().activeWorkspace
-    if (current) await createChatInDirectory(current.path)
+    // The folder the UI is SHOWING, which during a preview is the browsed
+    // chat's rather than the engine's. The composer's directory button names
+    // that one, so a chat started from here has to land in the same place the
+    // screen says it will.
+    const state = useAppStore.getState()
+    const folder = state.selectedChat?.projectPath ?? state.activeWorkspace?.path ?? null
+    if (folder) await createChatInDirectory(folder)
     else await createChatInDirectory()
   }
 
