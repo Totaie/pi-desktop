@@ -3,6 +3,7 @@ import { pathGroupKey, pathsEqual } from '../../../shared/path-compare'
 import { clsx } from 'clsx'
 import {
   MessageSquare,
+  MessageSquarePlus,
   Settings,
   FolderOpen,
   Clock,
@@ -49,6 +50,7 @@ export function Sidebar(): React.JSX.Element {
   const activeSessionRuntimeId = useAppStore((state) => state.activeSessionRuntimeId)
   const selectedChat = useAppStore((state) => state.selectedChat)
   const createNewSession = useAppStore((state) => state.createNewSession)
+  const createChatInDirectory = useAppStore((state) => state.createChatInDirectory)
   const openWorkflowRunsForSession = useAppStore((state) => state.openWorkflowRunsForSession)
   const setWorkflowPanelOpen = useAppStore((state) => state.setWorkflowPanelOpen)
   const globalWorkflowOpen = useGlobalWorkflowOpen()
@@ -218,6 +220,17 @@ export function Sidebar(): React.JSX.Element {
       .sort((a, b) => b.lastModified - a.lastModified)
       .slice(0, MAX_SESSIONS_PER_GROUP)
   }, [activeSessions, activeWorkspace?.path])
+
+  // The folder already in front of you, or a picker when there is none — the
+  // two-step the tab row's folder button did, collapsed into one control now
+  // that the row it lived on is gone. Which folder a chat runs in still
+  // changes in the composer; this only starts one.
+  const startChatHere = async (): Promise<void> => {
+    setWorkflowPanelOpen(false)
+    const current = useAppStore.getState().activeWorkspace
+    if (current) await createChatInDirectory(current.path)
+    else await createChatInDirectory()
+  }
 
   const startNewSession = async (): Promise<void> => {
     if (!activeWorkspace) {
@@ -426,13 +439,26 @@ export function Sidebar(): React.JSX.Element {
           to reach something already reachable — open chats are tabs, and the
           history is the list directly under Chat, separated by a rule rather
           than behind a section of its own. */}
-      <nav className="px-2 py-3">
-        <SidebarItem
-          icon={<MessageSquare size={14} />}
-          label="Chat"
-          active={currentView === 'chat'}
-          onClick={() => setCurrentView('chat')}
-        />
+      <nav className="flex items-center gap-1 px-2 py-3">
+        <div className="min-w-0 flex-1">
+          <SidebarItem
+            icon={<MessageSquare size={14} />}
+            label="Chat"
+            active={currentView === 'chat'}
+            onClick={() => setCurrentView('chat')}
+          />
+        </div>
+        {/* Starting a chat came down from the tab row. It belongs beside the
+            list of chats rather than above the transcript. */}
+        <button
+          type="button"
+          onClick={() => void startChatHere()}
+          className="shrink-0 rounded-md p-2 text-muted transition-colors hover:bg-highlight hover:text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-focus"
+          title="New chat in this folder"
+          aria-label="New chat in this folder"
+        >
+          <MessageSquarePlus size={15} />
+        </button>
       </nav>
 
       {/* Recent chats in the current folder, directly under Chat. The rule

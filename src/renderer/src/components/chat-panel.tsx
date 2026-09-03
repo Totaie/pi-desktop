@@ -1,7 +1,6 @@
 import { useAppStore } from '../store'
 import { agentEngineLabel } from '../../../shared/agent-engine-label'
 import { ChatInput } from './chat-input'
-import { ChatProjectPicker } from './chat-project-picker'
 import { CouncilPanels } from './council-panels'
 import { MessageBubble, ToolGroupBubble } from './message-bubble'
 import { StreamingBubble } from './streaming-bubble'
@@ -209,10 +208,15 @@ export function ChatPanel(): React.JSX.Element {
                           ))}
                         </div>
                       )}
+                      {/* No project picker under the composer. It listed
+                          workspaces — a layer this fork removed — and named the
+                          same folder the composer's own directory button
+                          already names, so on this screen two controls sat one
+                          above the other reading "PI Agent". The directory
+                          button is the one that survives: it is per-chat, it is
+                          where the chat is written, and it is on screen in
+                          every chat rather than only the empty one. */}
                       <ChatInput />
-                      <div className="px-4">
-                        <ChatProjectPicker />
-                      </div>
                     </div>
                   </div>
                 )

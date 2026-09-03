@@ -16,7 +16,6 @@ import { NotePicker } from './components/note-picker'
 import { CommandPalette } from './components/command-palette'
 import { ExtensionUiDialog, AppConfirmDialog } from './components/extension-ui-dialog'
 import { ReviewRail } from './components/review-rail'
-import { ChatTabs } from './components/chat-tabs'
 import { RemotePanel } from './components/remote-panel'
 import { StackPanel } from './components/stack-panel'
 import { WorkflowNavigator } from './components/workflow-navigator'
@@ -135,7 +134,12 @@ export function App(): React.JSX.Element {
           </button>
         </div>
       )}
-      {isHome && !sidebarOpen && (
+      {/* The way back to a closed sidebar. It used to sit in the tab row
+          for chat and here only for Home; with the tab row gone this is the
+          one that has to cover both, so it is no longer conditioned on Home.
+          (The status bar also has a toggle, but a control you reach by
+          hunting the bottom edge is not a way back.) */}
+      {!sidebarOpen && (
         <button
           type="button"
           onClick={toggleSidebar}
@@ -150,7 +154,12 @@ export function App(): React.JSX.Element {
         {sidebarOpen && showChrome && <Sidebar />}
 
         <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-          {showChrome && <ChatTabs />}
+          {/* No tab row. It listed the open chats above a sidebar that
+              lists every chat, and carried a new-chat button and a folder
+              button that named the same folder the composer already names D
+              four controls restating the two beside them. Switching lives in
+              the sidebar, starting lives next to it, and the folder lives in
+              the composer where the message is written. */}
           <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
             <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
               <div className={globalWorkflowOpen ? 'hidden' : 'contents'}>
