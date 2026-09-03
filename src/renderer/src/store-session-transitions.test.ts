@@ -237,6 +237,10 @@ const piDesktopStub = {
       calls.push('getMessages')
       return { success: true, data: { messages: [] } }
     },
+    readFileMessages: async (path: string) => {
+      calls.push(`readFileMessages:${path}`)
+      return { success: true, data: { messages: [] } }
+    },
     getState: async () => ({ success: true, data: sessionStateResult }),
     getStats: async () => ({ success: true, data: null }),
     list: async () => [],
@@ -343,6 +347,7 @@ beforeEach(() => {
     sessionLoading: false,
     sessionRuntimes: {},
     activeSessionRuntimeId: null,
+    selectedChat: null,
     activeWorkspace: null,
     workspaces: [],
     piStatus: 'stopped',
@@ -1672,7 +1677,7 @@ function sessionItemFor(workspace: Workspace): SessionListItem {
   }
 }
 
-test('openSessionItem in the active workspace switches straight to the session', async () => {
+test('selecting a session shows it without moving the engine', async () => {
   workspaceListResult = [WORKSPACE_ONE]
   activeWorkspaceResult = WORKSPACE_ONE
   useAppStore.setState({
@@ -1684,11 +1689,33 @@ test('openSessionItem in the active workspace switches straight to the session',
   await useAppStore.getState().openSessionItem(sessionItemFor(WORKSPACE_ONE))
 
   assert.equal(calls.some((c) => c.startsWith('setActiveWorkspace')), false)
-  assert.equal(calls.includes(`switch:${SESSION_PATH}`), true)
+  assert.equal(
+    calls.includes(`switch:${SESSION_PATH}`),
+    false,
+    'selecting a chat is read-only — the engine moves on the first send'
+  )
   assert.equal(useAppStore.getState().currentView, 'chat')
+  assert.equal(useAppStore.getState().selectedChat?.sessionPath, SESSION_PATH)
 })
 
-test('openSessionItem auto-switches to the owning workspace first', async () => {
+test('committing a selection in the active workspace switches straight to the session', async () => {
+  workspaceListResult = [WORKSPACE_ONE]
+  activeWorkspaceResult = WORKSPACE_ONE
+  useAppStore.setState({
+    activeWorkspace: WORKSPACE_ONE,
+    workspaces: [WORKSPACE_ONE],
+    currentView: 'sessions',
+  })
+
+  await useAppStore.getState().openSessionItem(sessionItemFor(WORKSPACE_ONE))
+  assert.equal(await useAppStore.getState().commitSelectedChat(), true)
+
+  assert.equal(calls.some((c) => c.startsWith('setActiveWorkspace')), false)
+  assert.equal(calls.includes(`switch:${SESSION_PATH}`), true)
+  assert.equal(useAppStore.getState().selectedChat, null, 'a committed selection is no longer pending')
+})
+
+test('committing a selection auto-switches to the owning workspace first', async () => {
   workspaceListResult = [WORKSPACE_ONE, WORKSPACE_TWO]
   activeWorkspaceResult = WORKSPACE_ONE
   useAppStore.setState({
@@ -1698,6 +1725,9 @@ test('openSessionItem auto-switches to the owning workspace first', async () => 
   })
 
   await useAppStore.getState().openSessionItem(sessionItemFor(WORKSPACE_TWO))
+  assert.equal(calls.some((c) => c.startsWith('setActiveWorkspace')), false, 'not on selection')
+
+  assert.equal(await useAppStore.getState().commitSelectedChat(), true)
 
   assert.equal(calls.includes(`setActiveWorkspace:${WORKSPACE_TWO.id}`), true)
   assert.equal(calls.includes(`switch:${SESSION_PATH}`), true)
@@ -1719,7 +1749,7 @@ function enterWorkspacesWithBackgroundTurn(): void {
   })
 }
 
-test('openSessionItem switches tabs before opening the requested session', async () => {
+test('a selection made mid-stream still switches tabs before opening the session', async () => {
   workspaceListResult = [WORKSPACE_ONE, WORKSPACE_TWO]
   activeWorkspaceResult = WORKSPACE_ONE
   useAppStore.setState({
@@ -1730,13 +1760,14 @@ test('openSessionItem switches tabs before opening the requested session', async
   enterStreamingState()
 
   await useAppStore.getState().openSessionItem(sessionItemFor(WORKSPACE_TWO))
+  assert.equal(await useAppStore.getState().commitSelectedChat(), true)
 
   assert.equal(calls.includes(`setActiveWorkspace:${WORKSPACE_TWO.id}`), true)
   assert.equal(calls.includes(`switch:${SESSION_PATH}`), true)
   assert.equal(useAppStore.getState().currentView, 'chat')
 })
 
-test('openSessionItem creates a workspace for an unknown project path', async () => {
+test('committing a selection creates a workspace for an unknown project path', async () => {
   workspaceListResult = [WORKSPACE_ONE]
   activeWorkspaceResult = WORKSPACE_ONE
   useAppStore.setState({
@@ -1745,7 +1776,13 @@ test('openSessionItem creates a workspace for an unknown project path', async ()
     currentView: 'sessions',
   })
 
+  // A chat listed from a folder this app session has never opened: the
+  // selection carries only its paths, so the commit is what has to turn them
+  // into a workspace.
   await useAppStore.getState().openSessionItem(sessionItemFor(WORKSPACE_TWO))
+  assert.equal(calls.some((c) => c.startsWith('createWorkspace')), false, 'not on selection')
+
+  assert.equal(await useAppStore.getState().commitSelectedChat(), true)
 
   assert.equal(
     calls.includes(`createWorkspace:${WORKSPACE_TWO.name}:${WORKSPACE_TWO.path}`),
@@ -1753,6 +1790,77 @@ test('openSessionItem creates a workspace for an unknown project path', async ()
     'an unknown project path must get a workspace before the session switch'
   )
   assert.equal(calls.includes(`switch:${SESSION_PATH}`), true)
+})
+
+test('selecting a chat reads its history off disk, not through the engine', async () => {
+  workspaceListResult = [WORKSPACE_ONE]
+  activeWorkspaceResult = WORKSPACE_ONE
+  useAppStore.setState({
+    activeWorkspace: WORKSPACE_ONE,
+    workspaces: [WORKSPACE_ONE],
+    piStatus: 'running',
+  })
+
+  await useAppStore.getState().openSessionItem(sessionItemFor(WORKSPACE_ONE))
+
+  assert.equal(
+    calls.includes(`readFileMessages:${SESSION_PATH}`),
+    true,
+    'the transcript comes off disk, which is what makes selection engine-free'
+  )
+  assert.equal(calls.includes('getMessages'), false, 'the engine is never asked')
+})
+
+test('the first send in a selected chat switches to it before the prompt goes out', async () => {
+  workspaceListResult = [WORKSPACE_ONE, WORKSPACE_TWO]
+  activeWorkspaceResult = WORKSPACE_ONE
+  useAppStore.setState({
+    activeWorkspace: WORKSPACE_ONE,
+    workspaces: [WORKSPACE_ONE, WORKSPACE_TWO],
+  })
+  await useAppStore.getState().openSessionItem(sessionItemFor(WORKSPACE_TWO))
+  calls.length = 0
+
+  await useAppStore.getState().sendPrompt('ship it')
+
+  const switchAt = calls.indexOf(`switch:${SESSION_PATH}`)
+  const promptAt = calls.findIndex((c) => c.startsWith('prompt:'))
+  assert.notEqual(switchAt, -1, 'the deferred switch is what the send is for')
+  assert.notEqual(promptAt, -1)
+  assert.ok(switchAt < promptAt, 'the prompt must land in the chat the user was looking at')
+  assert.equal(useAppStore.getState().selectedChat, null)
+})
+
+test('returning to the live chat after a preview puts its own transcript back', async () => {
+  const OTHER_PATH = '/tmp/session-c.jsonl'
+  workspaceListResult = [WORKSPACE_ONE, WORKSPACE_TWO]
+  activeWorkspaceResult = WORKSPACE_ONE
+  useAppStore.setState({
+    activeWorkspace: WORKSPACE_ONE,
+    workspaces: [WORKSPACE_ONE, WORKSPACE_TWO],
+    piStatus: 'running',
+    // SESSION_PATH is the chat the engine is attached to.
+    sessionState: sessionStateWith(SESSION_PATH),
+  })
+
+  // Browse a different chat: its history replaces what is on screen.
+  await useAppStore
+    .getState()
+    .openSessionItem({ ...sessionItemFor(WORKSPACE_TWO), path: OTHER_PATH })
+  assert.equal(useAppStore.getState().selectedChat?.sessionPath, OTHER_PATH)
+  calls.length = 0
+
+  // Back to the live one. Nothing to switch — but the borrowed transcript has
+  // to go, or the live chat sits there showing another chat's messages.
+  await useAppStore.getState().openSessionItem(sessionItemFor(WORKSPACE_ONE))
+
+  assert.equal(useAppStore.getState().selectedChat, null)
+  assert.equal(calls.includes('getMessages'), true, 'the live chat rehydrates through its engine')
+  assert.equal(
+    calls.some((c) => c.startsWith('switch:')),
+    false,
+    'it is already the live session, so nothing is switched'
+  )
 })
 
 test('switching into a working workspace shows the indicator and marks the attach', async () => {
@@ -1859,7 +1967,7 @@ test('the activity map going quiet after an attach stops the indicator and backf
   assert.equal(calls.filter((c) => c === 'getMessages').length, loadsBefore + 1)
 })
 
-test('opening a mid-turn session row leaves the other runtime working', async () => {
+test('selecting a mid-turn session row leaves the other runtime working', async () => {
   enterWorkspacesWithBackgroundTurn()
   sessionStateResult = sessionStateWith(SESSION_PATH)
   switchResult = {
@@ -1875,6 +1983,13 @@ test('opening a mid-turn session row leaves the other runtime working', async ()
   }
 
   await useAppStore.getState().openSessionItem(sessionItemFor(WORKSPACE_TWO))
+  assert.equal(
+    calls.includes(`switch:${SESSION_PATH}`),
+    false,
+    'browsing a row must not disturb the runtime working in the other workspace'
+  )
+
+  assert.equal(await useAppStore.getState().commitSelectedChat(), true)
 
   const state = useAppStore.getState()
   assert.equal(calls.includes(`switch:${SESSION_PATH}`), true)
@@ -1907,6 +2022,7 @@ test('opening a different session mid-turn does not prompt or stop the other run
   sessionStateResult = sessionStateWith('/tmp/other-turn-session.jsonl')
 
   await useAppStore.getState().openSessionItem(sessionItemFor(WORKSPACE_TWO))
+  assert.equal(await useAppStore.getState().commitSelectedChat(), true)
 
   assert.equal(calls.includes(`switch:${SESSION_PATH}`), true)
   assert.equal(useAppStore.getState().reattachedMidTurn, false)
@@ -1917,6 +2033,7 @@ test('a background runtime never blocks session navigation with a warning', asyn
   sessionStateResult = sessionStateWith('/tmp/other-turn-session.jsonl')
 
   await useAppStore.getState().openSessionItem(sessionItemFor(WORKSPACE_TWO))
+  assert.equal(await useAppStore.getState().commitSelectedChat(), true)
 
   assert.equal(calls.includes(`switch:${SESSION_PATH}`), true)
   assert.equal(useAppStore.getState().confirmRequest, null)
@@ -1971,6 +2088,7 @@ test('session navigation does not require workspace re-attachment', async () => 
   enterWorkspacesWithBackgroundTurn()
   sessionStateResult = sessionStateWith(SESSION_PATH)
   await useAppStore.getState().openSessionItem(sessionItemFor(WORKSPACE_TWO))
+  assert.equal(await useAppStore.getState().commitSelectedChat(), true)
 
   assert.equal(useAppStore.getState().reattachedMidTurn, false)
   assert.equal(useAppStore.getState().isStreaming, false)

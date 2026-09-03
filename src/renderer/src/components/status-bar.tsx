@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useAppStore, countPromptsWaitingElsewhere, formatPromptsWaiting } from '../store'
+import { StatusPopover } from './status-popover'
 import { agentEngineLabel } from '../../../shared/agent-engine-label'
 import { clsx } from 'clsx'
 import {
@@ -14,11 +15,10 @@ import {
   GitBranch,
   Workflow as WorkflowIcon,
   QrCode,
+  Home,
 } from 'lucide-react'
 
 export function StatusBar(): React.JSX.Element {
-  const piStatus = useAppStore((state) => state.piStatus)
-  const piPid = useAppStore((state) => state.piPid)
   // Name the engine that is actually running; the two are not interchangeable
   // and a user who switched to OMP should not be told Pi is running.
   const engineLabel = useAppStore((state) => agentEngineLabel(state.piEngine) ?? 'Pi')
@@ -78,21 +78,9 @@ export function StatusBar(): React.JSX.Element {
     <div className="flex h-7 items-center justify-between border-t border-border bg-app px-3 text-xs">
       {/* Left section */}
       <div className="flex items-center gap-3">
-        {/* Pi Status */}
-        <div className="flex items-center gap-1.5">
-          <div
-            className={clsx(
-              'h-1.5 w-1.5 rounded-full',
-              piStatus === 'running' && 'bg-success',
-              piStatus === 'starting' && 'bg-warning animate-pulse',
-              piStatus === 'error' && 'bg-error',
-              piStatus === 'stopped' && 'bg-elevated'
-            )}
-          />
-          <span className="text-dim">
-            {piStatus === 'running' ? `${engineLabel} running (PID: ${piPid})` : `${engineLabel} ${piStatus}`}
-          </span>
-        </div>
+        {/* Status, and the detail behind it. The bar already carried this line;
+            the popover it now opens is what the removed header held. */}
+        <StatusPopover />
 
         {/* Git branch of the active workspace */}
         {gitBranch && (
@@ -229,6 +217,20 @@ export function StatusBar(): React.JSX.Element {
           aria-label="Remote access"
         >
           <QrCode size={12} />
+        </button>
+
+        {/* Home. The launcher's only remaining door now that the sidebar
+            header is gone — small, but a view with no way back to it is a view
+            that has been deleted by accident. No active state: the bar is not
+            drawn on Home, so this button is only ever seen from somewhere
+            else. */}
+        <button
+          onClick={() => setCurrentView('home')}
+          className="rounded p-0.5 text-dim hover:text-secondary transition-colors"
+          title="Home"
+          aria-label="Home"
+        >
+          <Home size={12} />
         </button>
 
         {/* Settings */}

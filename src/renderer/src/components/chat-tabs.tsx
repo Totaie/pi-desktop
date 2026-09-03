@@ -34,10 +34,12 @@ export function ChatTabs(): React.JSX.Element {
   const workspaces = useAppStore((state) => state.workspaces)
   const sessionList = useAppStore((state) => state.sessionList)
   const activeSessionRuntimeId = useAppStore((state) => state.activeSessionRuntimeId)
-  // Selection can lead the engine: a chat is highlighted the moment it is
-  // clicked, while the engine only follows on the first send.
-  const selectedChatRuntimeId = useAppStore((state) => state.selectedChatRuntimeId)
-  const shownRuntimeId = selectedChatRuntimeId ?? activeSessionRuntimeId
+  // Selection can lead the engine: a chat is shown the moment it is clicked,
+  // while the engine only follows on the first send. A selection with no
+  // runtime is a recent chat that has never run here — it is on screen with no
+  // tab of its own, so no tab lights up and the sidebar row marks it instead.
+  const selectedChat = useAppStore((state) => state.selectedChat)
+  const shownRuntimeId = selectedChat ? selectedChat.runtimeId : activeSessionRuntimeId
   const sidebarOpen = useAppStore((state) => state.sidebarOpen)
   const toggleSidebar = useAppStore((state) => state.toggleSidebar)
   const currentView = useAppStore((state) => state.currentView)

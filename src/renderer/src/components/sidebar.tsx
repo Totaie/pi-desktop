@@ -2,11 +2,9 @@ import { useAppStore } from '../store'
 import { pathGroupKey, pathsEqual } from '../../../shared/path-compare'
 import { clsx } from 'clsx'
 import {
-  Home,
   MessageSquare,
   Settings,
   FolderOpen,
-  PanelLeftClose,
   Clock,
   Package,
   ChevronDown,
@@ -17,7 +15,6 @@ import {
   Workflow as WorkflowIcon,
 } from 'lucide-react'
 import { useMemo, useState, useRef } from 'react'
-import { StatusPopover } from './status-popover'
 import { useContextMenu, buildSessionContextMenu } from './context-menu'
 import { getSessionEngineLabel, getSessionRowLabels, hasMixedSessionEngines } from './sidebar-session-labels'
 import { ResizeHandle } from './resize-handle'
@@ -46,11 +43,11 @@ interface RecentSessionGroup {
 export function Sidebar(): React.JSX.Element {
   const currentView = useAppStore((state) => state.currentView)
   const setCurrentView = useAppStore((state) => state.setCurrentView)
-  const toggleSidebar = useAppStore((state) => state.toggleSidebar)
   const sessionState = useAppStore((state) => state.sessionState)
   const sessionList = useAppStore((state) => state.sessionList)
   const sessionRuntimes = useAppStore((state) => state.sessionRuntimes)
   const activeSessionRuntimeId = useAppStore((state) => state.activeSessionRuntimeId)
+  const selectedChat = useAppStore((state) => state.selectedChat)
   const createNewSession = useAppStore((state) => state.createNewSession)
   const openWorkflowRunsForSession = useAppStore((state) => state.openWorkflowRunsForSession)
   const setWorkflowPanelOpen = useAppStore((state) => state.setWorkflowPanelOpen)
@@ -281,7 +278,15 @@ export function Sidebar(): React.JSX.Element {
     // safe fallback when a row's header is unreadable.
     const workflowSessionId = resolveRunSessionId(session.piSessionId, session.sessionId) ?? session.sessionId
     const runtime = Object.values(sessionRuntimes).find((item) => item.sessionPath && pathsEqual(item.sessionPath, session.path))
+    // Live means the engine is attached to this session — what rename needs,
+    // since Pi renames the session it is running.
     const isActive = sessionState?.sessionFile === session.path || runtime?.runtimeId === activeSessionRuntimeId
+    // Shown means this is the transcript on screen, which can lead the engine
+    // by a selection. Highlighting the live row instead would leave the click
+    // looking like it did nothing.
+    const isShown = selectedChat
+      ? !!selectedChat.sessionPath && pathsEqual(selectedChat.sessionPath, session.path)
+      : isActive
     const nested = options?.nested ?? false
     const engineLabel = showEngineTags ? getSessionEngineLabel(session) : null
 
@@ -315,7 +320,7 @@ export function Sidebar(): React.JSX.Element {
           className={clsx(
             'flex w-full items-center gap-2 rounded px-2 py-1.5 pr-7 text-left text-sm transition-colors',
             nested && 'pl-2',
-            isActive
+            isShown
               ? 'bg-card text-primary'
               : 'hover:bg-highlight text-muted hover:text-secondary'
           )}
@@ -408,51 +413,19 @@ export function Sidebar(): React.JSX.Element {
       className="flex shrink-0 flex-col border-r border-border bg-app"
       style={{ width: sidebarWidth }}
     >
-      {/* Header */}
-      <div className="flex h-12 items-center justify-between border-b border-border px-3">
-        <div className="flex items-center gap-2">
-          <StatusPopover />
-          {/* Compact Home replaces the duplicate Pi-activity popover: workspace
-              activity already lives in the switcher row, tab icons, and switcher
-              dropdown, so the header keeps only system status + Home. */}
-          <button
-            type="button"
-            onClick={() => setCurrentView('home')}
-            className={clsx(
-              'rounded p-1.5 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-focus',
-              currentView === 'home'
-                ? 'bg-card text-accent-fg'
-                : 'text-muted hover:bg-surface-hover hover:text-primary'
-            )}
-            title="Home (Esc to launcher)"
-            aria-label="Home"
-          >
-            <Home size={16} />
-          </button>
-          <span className="text-sm font-medium text-primary">Pi Desktop</span>
-        </div>
-        <button
-          onClick={toggleSidebar}
-          className="rounded p-1 text-muted hover:bg-surface-hover hover:text-primary"
-          title="Close sidebar"
-          aria-label="Close sidebar"
-        >
-          <PanelLeftClose size={16} />
-        </button>
-      </div>
+      {/* Nothing above the list. No app header, no Project header, no New
+          session button, no Current Session card — the folder a chat runs in
+          is chosen in the composer, each open chat is a tab, and the tab and
+          composer already say which session and folder are live. What the app
+          header held is all still one click away somewhere permanent: system
+          status is the status bar's own light, and Home and the sidebar toggle
+          are icons beside it.
 
-      {/* No Project header, no New session button, no Current Session card.
-          The folder a chat runs in is chosen in the composer now, each open
-          chat is a tab, and the tab plus the composer already say which
-          session and folder are live — three headers restating that is the
-          chrome this fork keeps removing. */}
-      {/* Navigation.
-          One entry. Everything that used to live here — All chats, New task,
-          Mission Control, Workflows, Timeline — was a second way to reach
-          something already reachable: open chats are tabs, and the history is
-          the list directly below. A nav that mostly navigates to other navs is
-          the layer this fork exists to remove, so recents sit under Chat
-          separated by a rule rather than behind a section of their own. */}
+          The nav below it is one entry for the same reason. All chats, New
+          task, Mission Control, Workflows and Timeline were each a second way
+          to reach something already reachable — open chats are tabs, and the
+          history is the list directly under Chat, separated by a rule rather
+          than behind a section of its own. */}
       <nav className="px-2 py-3">
         <SidebarItem
           icon={<MessageSquare size={14} />}

@@ -126,19 +126,26 @@ export function StatusPopover(): React.JSX.Element {
 
   return (
     <div ref={ref} className="relative">
-      {/* Status trigger */}
+      {/* The status line IS the trigger. It lives in the status bar now that
+          the header is gone, and it was already on screen saying this much —
+          making it clickable is how the detail behind it survived without
+          adding a control of its own. */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-1.5 rounded-md px-2 py-1 hover:bg-surface-hover transition-colors"
-        title="System status"
+        className="flex items-center gap-1.5 rounded text-dim transition-colors hover:text-secondary"
+        title="System status — process, model, commands, skills, MCP servers"
       >
-        <div className={clsx('h-2 w-2 rounded-full', statusColor)} />
-        <Activity size={12} className="text-muted" />
+        <div className={clsx('h-1.5 w-1.5 rounded-full', statusColor)} />
+        <span>
+          {piStatus === 'running'
+            ? `${engineLabel} running (PID: ${piPid})`
+            : `${engineLabel} ${piStatus}`}
+        </span>
       </button>
 
-      {/* Popover */}
+      {/* Opens upward: the trigger sits on the bottom edge of the window. */}
       {isOpen && (
-        <div className="absolute top-full left-0 mt-1 w-80 rounded-xl border border-border-strong bg-surface shadow-2xl shadow-black/50 overflow-hidden animate-fade-in z-50">
+        <div className="absolute bottom-full left-0 mb-1 w-80 rounded-xl border border-border-strong bg-surface shadow-2xl shadow-black/50 overflow-hidden animate-fade-in z-50">
           {/* Header */}
           <div className="px-4 py-3 border-b border-border bg-surface/50">
             <div className="flex items-center gap-2">

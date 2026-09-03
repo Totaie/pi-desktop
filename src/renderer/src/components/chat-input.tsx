@@ -87,12 +87,18 @@ export function ChatInput(): React.JSX.Element {
   const recordPrompt = useAppStore((s) => s.recordPrompt)
   const permissionMode = useAppStore((s) => s.settings?.permissionMode)
   const activeWorkspace = useAppStore((s) => s.activeWorkspace)
+  const selectedChat = useAppStore((s) => s.selectedChat)
   const createChatInDirectory = useAppStore((s) => s.createChatInDirectory)
 
+  // Where the next message will actually run. A selected chat has not moved the
+  // engine yet, so activeWorkspace is still the previous chat's folder — naming
+  // that here would put the wrong directory on the control whose whole job is
+  // to name it.
+  const chatFolderPath = selectedChat?.projectPath ?? activeWorkspace?.path ?? null
   // Folder basename, not the workspace's given name: the name is a leftover of
   // the project layer this fork removed.
-  const chatFolderLabel = activeWorkspace
-    ? activeWorkspace.path.split(/[\\/]/).filter(Boolean).pop() || activeWorkspace.path
+  const chatFolderLabel = chatFolderPath
+    ? chatFolderPath.split(/[\\/]/).filter(Boolean).pop() || chatFolderPath
     : 'Choose folder'
 
   // Changing the folder starts a chat in the new one rather than repointing the
@@ -655,7 +661,7 @@ export function ChatInput(): React.JSX.Element {
             onClick={() => void changeChatFolder()}
             disabled={isDisabled}
             className="hover:bg-highlight-strong flex max-w-[180px] items-center gap-1 rounded-md px-1.5 py-1 text-xs text-dim transition-colors hover:text-secondary disabled:opacity-50"
-            title={activeWorkspace ? `Running in ${activeWorkspace.path} — click to change` : 'Choose a folder for this chat'}
+            title={chatFolderPath ? `Running in ${chatFolderPath} — click to change` : 'Choose a folder for this chat'}
             aria-label="Change the folder this chat runs in"
           >
             <FolderTree size={14} className="shrink-0" />

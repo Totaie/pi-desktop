@@ -272,6 +272,23 @@ async function waitForRuntimeIdle(
 
 // ─── Store Shape ─────────────────────────────────────────────────────────────
 
+/**
+ * A chat the UI is showing that the engine has not moved to yet.
+ *
+ * Selecting a chat is read-only, so the shown chat runs AHEAD of the engine.
+ * A tab names a runtime; a recent-chat row names only a file on disk, because
+ * a chat that has not run in this app session has no runtime at all. Both
+ * defer the switch to the first send, so both are carried here — the path
+ * fields are what let the runtime-less case be committed later.
+ */
+export interface SelectedChat {
+  /** The open tab this selection came from, if it had one. */
+  runtimeId: string | null
+  sessionPath: string | null
+  projectPath: string | null
+  projectName: string | null
+}
+
 interface AppState {
   // Pi process
   piStatus: PiProcessStatus
@@ -290,14 +307,13 @@ interface AppState {
   sessionRuntimes: Record<string, SessionRuntimeInfo>
   activeSessionRuntimeId: string | null
   /**
-   * The chat the UI is showing, which may run AHEAD of the engine.
+   * The chat the UI is showing, when that is not the one the engine is on.
    *
    * Selecting a chat only reads its history; the engine follows on the first
-   * send. So this is the tab that looks selected, while activeSessionRuntimeId
-   * stays on whatever the engine is actually attached to. Null means the two
-   * agree.
+   * send. So this is what looks selected, while activeSessionRuntimeId stays
+   * on whatever the engine is actually attached to. Null means the two agree.
    */
-  selectedChatRuntimeId: string | null
+  selectedChat: SelectedChat | null
   forkMessages: ForkPoint[]
 
   // Messages
@@ -502,11 +518,30 @@ interface AppActions {
   switchSession: (path: string, projectPath?: string) => Promise<void>
   /**
    * Open a session row from any surface (sidebar, session panel, quick
-   * switcher): auto-switches or creates the owning workspace first, then
-   * switches to the session and shows Chat. The previous session runtime keeps
-   * running in the background while the new one hydrates.
+   * switcher). READ-ONLY, exactly like clicking a tab: it shows the chat's
+   * transcript and nothing else — no workspace activation, no engine, no
+   * interruption of a turn running elsewhere. commitSelectedChat does the
+   * actual switch on the first send.
    */
   openSessionItem: (session: SessionListItem) => Promise<void>
+  /**
+   * Show a session's transcript by reading its .jsonl, with no engine
+   * involved. Passing null just clears the view.
+   */
+  previewSessionHistory: (sessionPath: string | null) => Promise<void>
+  /**
+   * Put the live chat's own messages back after a preview borrowed the view
+   * for another chat.
+   */
+  restoreLiveTranscript: (sessionPath: string | null) => Promise<void>
+  /**
+   * Make the selected chat the live one: activate (or create) its workspace
+   * and switch the engine to its session. This is the work selection
+   * deliberately skips, done at the moment the user actually asks for that
+   * chat to run. Returns false if the switch was refused (a cancelled
+   * dirty-editor prompt), which callers must treat as "do not send".
+   */
+  commitSelectedChat: () => Promise<boolean>
   reloadActiveSession: (options?: { refreshList?: boolean }) => Promise<void>
   refreshSessionState: () => Promise<void>
   refreshSessionStats: () => Promise<void>
@@ -831,6 +866,27 @@ function scheduleSessionListRefresh(get: () => AppState & AppActions): void {
   }, 250)
 }
 
+/**
+ * Has this runtime become the chat the UI is showing?
+ *
+ * True for the runtime the selection named, and for any active runtime now
+ * serving the selection's session file: a selection made from the sidebar
+ * names a file, and the runtime that ends up serving it is created afterwards,
+ * so id-matching alone would leave the override stuck on forever.
+ */
+function selectionSatisfiedBy(
+  selected: SelectedChat | null,
+  runtime: SessionRuntimeInfo
+): boolean {
+  if (!selected || !runtime.active) return false
+  if (selected.runtimeId && runtime.runtimeId === selected.runtimeId) return true
+  return (
+    !!selected.sessionPath &&
+    !!runtime.sessionPath &&
+    pathsEqual(selected.sessionPath, runtime.sessionPath)
+  )
+}
+
 const PARSE_CHUNK = 50
 
 /** Parse history in chunks, yielding to the event loop so the UI can paint. */
@@ -926,7 +982,7 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
   sessionStats: null,
   sessionList: [],
   sessionRuntimes: {},
-  selectedChatRuntimeId: null,
+  selectedChat: null,
   remotePanelOpen: false,
   activeSessionRuntimeId: null,
   forkMessages: [],
@@ -1098,25 +1154,10 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     if (trimmed.startsWith('/workflows run ')) get().setWorkflowPanelOpen(true)
 
     // Selection ran ahead of the engine: this is the moment the user asked for
-    // this chat to become the live one, so do the switch that openChat
+    // this chat to become the live one, so do the switch that selecting it
     // deliberately skipped. Before the busy check, because that check is about
     // the engine we are about to move to.
-    const selectedId = get().selectedChatRuntimeId
-    if (selectedId && selectedId !== get().activeSessionRuntimeId) {
-      const target = get().sessionRuntimes[selectedId]
-      if (target) {
-        if (target.workspaceId !== get().activeWorkspace?.id) {
-          const switched = await get().activateWorkspace(target.workspaceId)
-          // A refused switch is a real answer (the dirty-editor prompt was
-          // cancelled), so the prompt is not delivered somewhere else.
-          if (!switched) return
-        }
-        if (target.sessionPath) {
-          const cwd = get().workspaces.find((w) => w.id === target.workspaceId)?.path
-          await get().switchSession(target.sessionPath, cwd)
-        }
-      }
-    }
+    if (!(await get().commitSelectedChat())) return
 
     // One engine at a time. If a different project is mid-turn, starting here
     // would quietly run a second Pi against a single-slot local server, so the
@@ -1714,30 +1755,139 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
   },
 
   openSessionItem: async (session) => {
-    // Auto-switch workspace if the session is from a different project. Skip
-    // the resume+history load — switchSession below loads the target session
-    // once. Paths are compared the way main compares them (case-insensitive on
-    // Windows): a casing mismatch here would route an existing workspace down
-    // the create path, which main turns into a silent activation.
-    const { activeWorkspace, workspaces } = get()
-    const projectPath = session.projectPath
-    if (projectPath && !(activeWorkspace && pathsEqual(activeWorkspace.path, projectPath))) {
-      const matchingWs = workspaces.find((w) => pathsEqual(w.path, projectPath))
-      if (matchingWs) {
-        if (!(await get().activateWorkspace(matchingWs.id, { awaitingSession: true }))) return
-      } else {
-        await get().createWorkspace(session.projectName, projectPath)
-        const newWs = get().workspaces.find((w) => pathsEqual(w.path, projectPath))
-        if (newWs && !(await get().activateWorkspace(newWs.id, { awaitingSession: true }))) return
-      }
-    }
-    // switchSession's working-workspace guard covers the live-turn cases from
-    // here on: the turn's own session re-attaches instead of switching, and
-    // opening a different session of a mid-turn workspace warns first.
-    await get().switchSession(session.path, projectPath)
     // Bring the chat into view (may be on Settings/Notes/etc.). In-app
     // switches keep their remembered scroll position, so no force-to-bottom.
     get().setCurrentView('chat')
+
+    const runtime = Object.values(get().sessionRuntimes).find(
+      (item) => item.sessionPath && pathsEqual(item.sessionPath, session.path)
+    )
+    // Live either way it can be known: the runtime the engine is attached to,
+    // or the session file the engine reports it is on. Requiring both would
+    // make a chat with stale runtime bookkeeping look previewable and blank
+    // its own live transcript.
+    const liveFile = get().sessionState?.sessionFile
+    const isLive =
+      (!!runtime && runtime.runtimeId === get().activeSessionRuntimeId) ||
+      (!!liveFile && pathsEqual(liveFile, session.path))
+
+    // Whether another chat's transcript is currently borrowed into the view.
+    const previewing = get().selectedChat !== null
+
+    if (isLive) {
+      // Back to the chat the engine is already on. Nothing to switch — but a
+      // preview left someone else's transcript on screen, so it has to go back.
+      set({ selectedChat: null })
+      if (previewing) await get().restoreLiveTranscript(session.path)
+      return
+    }
+
+    // Reading only, exactly like clicking a tab: no workspace activation, no
+    // engine, no interruption of a turn running elsewhere. A chat that has
+    // never run in this app session has no runtime to name, so the selection
+    // carries its paths instead and commitSelectedChat resolves — or creates
+    // — the workspace from them on the first send.
+    set({
+      selectedChat: {
+        runtimeId: runtime?.runtimeId ?? null,
+        sessionPath: session.path,
+        projectPath: session.projectPath ?? null,
+        projectName: session.projectName ?? null,
+      },
+    })
+    await get().previewSessionHistory(session.path)
+  },
+
+  previewSessionHistory: async (sessionPath) => {
+    // A fresh generation cancels any load already in flight, including one
+    // started by a real session switch, so the newest click owns the view.
+    const gen = ++sessionLoadGeneration
+    get().clearMessages()
+    if (!sessionPath) return
+
+    set({ sessionLoading: true })
+    try {
+      const response = await window.piDesktop.session.readFileMessages(sessionPath)
+      if (gen !== sessionLoadGeneration) return
+      const resp = response as { success?: boolean; data?: { messages?: unknown[] } } | null
+      if (resp?.success && resp.data?.messages) {
+        const loaded = await parseMessagesChunked(resp.data.messages, gen)
+        if (loaded === null || gen !== sessionLoadGeneration) return
+        set({ messages: loaded })
+      }
+    } catch {
+      // A history we cannot read is not a reason to refuse the selection; the
+      // chat opens empty and fills in when its engine starts on the first send.
+    } finally {
+      if (gen === sessionLoadGeneration) set({ sessionLoading: false })
+    }
+  },
+
+  restoreLiveTranscript: async (sessionPath) => {
+    // A preview replaced the live chat's messages with another chat's history,
+    // so coming back has to put them back. Through the engine when it is up,
+    // since it owns the live transcript, and off disk when it is not.
+    //
+    // Never while a turn is streaming: those messages are being written right
+    // now, and rebuilding the list underneath the stream is how a live answer
+    // gets truncated. A preview clears the streaming state on its way out, so
+    // this only holds off for a turn that is genuinely on screen.
+    if (get().isStreaming) return
+    if (get().piStatus === 'running') {
+      await get().reloadActiveSession({ refreshList: false })
+      return
+    }
+    await get().previewSessionHistory(sessionPath)
+  },
+
+  commitSelectedChat: async () => {
+    const selected = get().selectedChat
+    if (!selected) return true
+
+    const runtime = selected.runtimeId ? get().sessionRuntimes[selected.runtimeId] : undefined
+
+    // The engine is already where the selection points; drop the override and
+    // let the send go through untouched.
+    if (runtime && runtime.runtimeId === get().activeSessionRuntimeId) {
+      set({ selectedChat: null })
+      return true
+    }
+
+    // The workspace moves first: the engine runs in a directory, and a chat's
+    // own is the only one its transcript makes sense against. Paths are
+    // compared the way main compares them (case-insensitive on Windows) — a
+    // casing mismatch would route an existing workspace down the create path,
+    // which main turns into a silent activation.
+    const { projectPath, projectName } = selected
+    let workspaceId =
+      runtime?.workspaceId ??
+      (projectPath ? get().workspaces.find((w) => pathsEqual(w.path, projectPath))?.id : undefined)
+
+    if (!workspaceId && projectPath) {
+      await get().createWorkspace(projectName ?? projectPath, projectPath)
+      workspaceId = get().workspaces.find((w) => pathsEqual(w.path, projectPath))?.id
+    }
+
+    if (workspaceId && workspaceId !== get().activeWorkspace?.id) {
+      // awaitingSession only when a switchSession really follows — it holds
+      // the loading state open for that switch, and a chat with no file yet
+      // would otherwise leave the transcript spinning forever.
+      const options = selected.sessionPath ? { awaitingSession: true } : undefined
+      // A refused switch is a real answer (the dirty-editor prompt was
+      // cancelled), so the prompt is not delivered somewhere else.
+      if (!(await get().activateWorkspace(workspaceId, options))) return false
+    }
+
+    // switchSession's working-workspace guard covers the live-turn cases from
+    // here on: the turn's own session re-attaches instead of switching, and
+    // opening a different session of a mid-turn workspace warns first.
+    if (selected.sessionPath) {
+      const cwd = projectPath ?? get().workspaces.find((w) => w.id === workspaceId)?.path
+      await get().switchSession(selected.sessionPath, cwd)
+    }
+
+    set({ selectedChat: null })
+    return true
   },
 
   refreshSessionState: async () => {
@@ -2434,10 +2584,12 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
       sessionRuntimes: { ...current.sessionRuntimes, [runtime.runtimeId]: runtime },
       // The engine has caught up with (or moved to) the shown chat: drop the
       // override so selection and engine cannot silently diverge from here.
-      selectedChatRuntimeId:
-        runtime.active && runtime.runtimeId === current.selectedChatRuntimeId
-          ? null
-          : current.selectedChatRuntimeId,
+      // Matched on the session file as well as the runtime id, because a
+      // selection made from the sidebar names a file and the runtime that ends
+      // up serving it is created afterwards.
+      selectedChat: selectionSatisfiedBy(current.selectedChat, runtime)
+        ? null
+        : current.selectedChat,
       activeSessionRuntimeId: runtime.active
         ? runtime.runtimeId
         : current.activeSessionRuntimeId === runtime.runtimeId
@@ -2564,36 +2716,32 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     const runtime = get().sessionRuntimes[runtimeId]
     if (!runtime) return
     get().setCurrentView('chat')
-    set({ selectedChatRuntimeId: runtimeId })
 
-    // Already the live one: its transcript is on screen and its engine is the
-    // one attached, so there is nothing to do.
-    if (runtimeId === get().activeSessionRuntimeId) return
+    // Whether another chat's transcript is currently borrowed into the view.
+    const previewing = get().selectedChat !== null
+
+    if (runtimeId === get().activeSessionRuntimeId) {
+      // Already the live one: its engine is attached, so there is nothing to
+      // switch — but a preview left another chat's messages on screen, and
+      // returning here has to bring this chat's own transcript back.
+      set({ selectedChat: null })
+      if (previewing) await get().restoreLiveTranscript(runtime.sessionPath ?? null)
+      return
+    }
 
     // Reading only. Selecting a chat must not spawn an engine, move the active
     // workspace, or tear down the turn currently running elsewhere — that is
     // what makes browsing free. The switch is deferred to sendPrompt, which is
     // the moment the user actually asked for this chat to become live.
-    const gen = ++sessionLoadGeneration
-    get().clearMessages()
-    if (!runtime.sessionPath) return
-
-    set({ sessionLoading: true })
-    try {
-      const response = await window.piDesktop.session.readFileMessages(runtime.sessionPath)
-      if (gen !== sessionLoadGeneration) return
-      const resp = response as { success?: boolean; data?: { messages?: unknown[] } } | null
-      if (resp?.success && resp.data?.messages) {
-        const loaded = await parseMessagesChunked(resp.data.messages, gen)
-        if (loaded === null || gen !== sessionLoadGeneration) return
-        set({ messages: loaded })
-      }
-    } catch {
-      // A history we cannot read is not a reason to refuse the selection; the
-      // chat opens empty and fills in when its engine starts on the first send.
-    } finally {
-      if (gen === sessionLoadGeneration) set({ sessionLoading: false })
-    }
+    set({
+      selectedChat: {
+        runtimeId,
+        sessionPath: runtime.sessionPath ?? null,
+        projectPath: get().workspaces.find((w) => w.id === runtime.workspaceId)?.path ?? null,
+        projectName: null,
+      },
+    })
+    await get().previewSessionHistory(runtime.sessionPath ?? null)
   },
 
   createChatInDirectory: async (directory) => {
