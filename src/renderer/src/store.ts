@@ -314,6 +314,17 @@ interface AppState {
    * on whatever the engine is actually attached to. Null means the two agree.
    */
   selectedChat: SelectedChat | null
+  /**
+   * When the current turn was sent, and how fast the last one prefilled.
+   *
+   * On a local model the gap before the first token is prompt prefill, and it
+   * is the longest wait in the app. Measuring it (prompt tokens divided by
+   * time-to-first-token) turns "Waiting for response" into an estimate that
+   * calibrates itself to this machine instead of a hardcoded guess.
+   */
+  turnStartedAt: number | null
+  /** Tokens/sec, smoothed across turns. Null until one has been observed. */
+  prefillRate: number | null
   forkMessages: ForkPoint[]
 
   // Messages
@@ -1008,6 +1019,8 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
   sessionList: [],
   sessionRuntimes: {},
   selectedChat: null,
+  turnStartedAt: null,
+  prefillRate: null,
   remotePanelOpen: false,
   activeSessionRuntimeId: null,
   forkMessages: [],
@@ -1244,7 +1257,13 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
       attachments: options?.attachments,
     })
 
-    set({ isStreaming: true, streamingContent: '', streamingThinking: '', streamingToolCalls: new Map() })
+    set({
+      isStreaming: true,
+      streamingContent: '',
+      streamingThinking: '',
+      streamingToolCalls: new Map(),
+      turnStartedAt: Date.now(),
+    })
 
     try {
       if (isStreaming) {
@@ -1909,12 +1928,23 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
       if (!(await get().activateWorkspace(workspaceId, options))) return false
     }
 
-    // switchSession's working-workspace guard covers the live-turn cases from
-    // here on: the turn's own session re-attaches instead of switching, and
-    // opening a different session of a mid-turn workspace warns first.
     if (selected.sessionPath) {
       const cwd = projectPath ?? get().workspaces.find((w) => w.id === workspaceId)?.path
-      await get().switchSession(selected.sessionPath, cwd)
+      if (get().piStatus === 'running') {
+        // switchSession's working-workspace guard covers the live-turn cases:
+        // the turn's own session re-attaches instead of switching, and opening
+        // a different session of a mid-turn workspace warns first.
+        await get().switchSession(selected.sessionPath, cwd)
+      } else {
+        // Nothing to switch — there is no engine yet. Switching first and
+        // starting after is the bug: startPi applies the resume preference and
+        // boots on a DIFFERENT session, so on a fresh launch the first send in
+        // an existing chat threw the user into a new one while the prompt went
+        // where they asked. Binding the session at startup avoids the race
+        // entirely; PiStartOptions.sessionPath suppresses --continue.
+        await get().startPi({ cwd, sessionPath: selected.sessionPath })
+        if (get().piStatus !== 'running') return false
+      }
     }
 
     set({ selectedChat: null })
@@ -3529,6 +3559,28 @@ useAppStore.subscribe((state, prev) => {
 // Zustand set supports both object and callback forms
 type ZustandSet = (partial: Partial<AppState> | ((state: AppState) => Partial<AppState>)) => void
 
+/**
+ * First output of a turn: everything before this was prefill, so its duration
+ * over the prompt size is the machine's real prefill rate. Smoothed, because a
+ * cache hit makes one turn look impossibly fast and would then under-estimate
+ * every wait after it.
+ */
+function recordPrefill(set: ZustandSet): void {
+  set((state) => {
+    if (!state.turnStartedAt) return {}
+    const seconds = (Date.now() - state.turnStartedAt) / 1000
+    const tokens = state.sessionStats?.contextUsage?.tokens ?? 0
+    // Under a second, or with no idea of the prompt size, there is nothing to
+    // learn — just close the window so the rest of the turn is not measured.
+    if (seconds < 1 || tokens <= 0) return { turnStartedAt: null }
+    const observed = tokens / seconds
+    return {
+      turnStartedAt: null,
+      prefillRate: state.prefillRate ? state.prefillRate * 0.7 + observed * 0.3 : observed,
+    }
+  })
+}
+
 function handleMessageUpdate(
   event: PiMessageUpdateEvent,
   set: ZustandSet
@@ -3537,6 +3589,7 @@ function handleMessageUpdate(
 
   switch (assistantMessageEvent.type) {
     case 'text_delta':
+      recordPrefill(set)
       set((state) => ({
         streamingContent: state.streamingContent + (assistantMessageEvent.delta ?? ''),
       }))
@@ -3547,6 +3600,8 @@ function handleMessageUpdate(
       break
 
     case 'thinking_delta':
+      // Reasoning counts as output too: prefill ended the moment anything came back.
+      recordPrefill(set)
       set((state) => ({
         streamingThinking: state.streamingThinking + (assistantMessageEvent.delta ?? ''),
       }))

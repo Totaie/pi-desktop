@@ -151,8 +151,12 @@ const piDesktopStub = {
       if (getStatusFailure) throw new Error(getStatusFailure)
       return { status: piStatusResult, pid: piStatusResult === 'running' ? 1 : null, error: null }
     },
-    start: async () => {
-      calls.push('pi.start')
+    start: async (options?: unknown) => {
+      // One entry, so index-based ordering assertions still line up. The
+      // session is appended only when the start is bound to one, which is the
+      // case a test needs to distinguish.
+      const bound = (options as { sessionPath?: string } | undefined)?.sessionPath
+      calls.push(bound ? `pi.start:${bound}` : 'pi.start')
       return { status: 'running' as const, pid: 1, error: null }
     },
     restart: async () => {
@@ -491,7 +495,7 @@ test('switching sessions does not warn or stop the previous process', async () =
   await useAppStore.getState().switchSession(SESSION_PATH)
 
   const state = useAppStore.getState()
-  assert.equal(calls.includes(`switch:${SESSION_PATH}`), true)
+  assert.equal(engineBoundTo(SESSION_PATH), true)
   assert.equal(state.isStreaming, false, 'the newly selected session starts with a clean local stream')
   assert.equal(state.streamingContent, '')
   assert.deepEqual(state.pendingSteering, [])
@@ -1664,6 +1668,16 @@ test('the cross-workspace open flow loads the clicked session end to end', async
 
 // ─── openSessionItem (shared sidebar / session-panel / quick-switcher flow) ──
 
+/**
+ * The engine ended up on this session, by either route: switchSession when one
+ * was already running, or a start bound to it when there was not. Both are
+ * correct outcomes of a commit, and which one happens depends only on whether
+ * the target workspace already had a live engine.
+ */
+function engineBoundTo(path: string): boolean {
+  return calls.includes(`switch:${path}`) || calls.includes(`pi.start:${path}`)
+}
+
 function sessionItemFor(workspace: Workspace): SessionListItem {
   return {
     path: SESSION_PATH,
@@ -1705,13 +1719,15 @@ test('committing a selection in the active workspace switches straight to the se
     activeWorkspace: WORKSPACE_ONE,
     workspaces: [WORKSPACE_ONE],
     currentView: 'sessions',
+    // Switching is what this test is about, and a switch needs a live engine.
+    piStatus: 'running',
   })
 
   await useAppStore.getState().openSessionItem(sessionItemFor(WORKSPACE_ONE))
   assert.equal(await useAppStore.getState().commitSelectedChat(), true)
 
   assert.equal(calls.some((c) => c.startsWith('setActiveWorkspace')), false)
-  assert.equal(calls.includes(`switch:${SESSION_PATH}`), true)
+  assert.equal(engineBoundTo(SESSION_PATH), true)
   assert.equal(useAppStore.getState().selectedChat, null, 'a committed selection is no longer pending')
 })
 
@@ -1722,6 +1738,8 @@ test('committing a selection auto-switches to the owning workspace first', async
     activeWorkspace: WORKSPACE_ONE,
     workspaces: [WORKSPACE_ONE, WORKSPACE_TWO],
     currentView: 'sessions',
+    // Switching is what this test is about, and a switch needs a live engine.
+    piStatus: 'running',
   })
 
   await useAppStore.getState().openSessionItem(sessionItemFor(WORKSPACE_TWO))
@@ -1730,7 +1748,7 @@ test('committing a selection auto-switches to the owning workspace first', async
   assert.equal(await useAppStore.getState().commitSelectedChat(), true)
 
   assert.equal(calls.includes(`setActiveWorkspace:${WORKSPACE_TWO.id}`), true)
-  assert.equal(calls.includes(`switch:${SESSION_PATH}`), true)
+  assert.equal(engineBoundTo(SESSION_PATH), true)
   assert.equal(useAppStore.getState().currentView, 'chat')
 })
 
@@ -1746,6 +1764,9 @@ function enterWorkspacesWithBackgroundTurn(): void {
     activeWorkspace: WORKSPACE_ONE,
     workspaces: [WORKSPACE_ONE, WORKSPACE_TWO],
     workspaceActivity: { [WORKSPACE_ID]: { state: 'working', since: 1 } },
+    // A turn is running, so an engine is too. Without this the commit takes
+    // the cold-start path (bind the session at startup) instead of switching.
+    piStatus: 'running',
   })
 }
 
@@ -1756,6 +1777,8 @@ test('a selection made mid-stream still switches tabs before opening the session
     activeWorkspace: WORKSPACE_ONE,
     workspaces: [WORKSPACE_ONE, WORKSPACE_TWO],
     currentView: 'sessions',
+    // Switching is what this test is about, and a switch needs a live engine.
+    piStatus: 'running',
   })
   enterStreamingState()
 
@@ -1763,7 +1786,7 @@ test('a selection made mid-stream still switches tabs before opening the session
   assert.equal(await useAppStore.getState().commitSelectedChat(), true)
 
   assert.equal(calls.includes(`setActiveWorkspace:${WORKSPACE_TWO.id}`), true)
-  assert.equal(calls.includes(`switch:${SESSION_PATH}`), true)
+  assert.equal(engineBoundTo(SESSION_PATH), true)
   assert.equal(useAppStore.getState().currentView, 'chat')
 })
 
@@ -1774,6 +1797,8 @@ test('committing a selection creates a workspace for an unknown project path', a
     activeWorkspace: WORKSPACE_ONE,
     workspaces: [WORKSPACE_ONE],
     currentView: 'sessions',
+    // Switching is what this test is about, and a switch needs a live engine.
+    piStatus: 'running',
   })
 
   // A chat listed from a folder this app session has never opened: the
@@ -1789,7 +1814,7 @@ test('committing a selection creates a workspace for an unknown project path', a
     true,
     'an unknown project path must get a workspace before the session switch'
   )
-  assert.equal(calls.includes(`switch:${SESSION_PATH}`), true)
+  assert.equal(engineBoundTo(SESSION_PATH), true)
 })
 
 test('selecting a chat reads its history off disk, not through the engine', async () => {
@@ -1817,17 +1842,19 @@ test('the first send in a selected chat switches to it before the prompt goes ou
   useAppStore.setState({
     activeWorkspace: WORKSPACE_ONE,
     workspaces: [WORKSPACE_ONE, WORKSPACE_TWO],
+    // Switching is what this test is about, and a switch needs a live engine.
+    piStatus: 'running',
   })
   await useAppStore.getState().openSessionItem(sessionItemFor(WORKSPACE_TWO))
   calls.length = 0
 
   await useAppStore.getState().sendPrompt('ship it')
 
-  const switchAt = calls.indexOf(`switch:${SESSION_PATH}`)
+  const boundAt = calls.findIndex((c) => c === `switch:${SESSION_PATH}` || c === `pi.start:${SESSION_PATH}`)
   const promptAt = calls.findIndex((c) => c.startsWith('prompt:'))
-  assert.notEqual(switchAt, -1, 'the deferred switch is what the send is for')
+  assert.notEqual(boundAt, -1, 'the deferred switch is what the send is for')
   assert.notEqual(promptAt, -1)
-  assert.ok(switchAt < promptAt, 'the prompt must land in the chat the user was looking at')
+  assert.ok(boundAt < promptAt, 'the prompt must land in the chat the user was looking at')
   assert.equal(useAppStore.getState().selectedChat, null)
 })
 
@@ -1926,6 +1953,39 @@ test('a status update from the live chat leaves a preview alone', async () => {
   )
 
   assert.deepEqual(useAppStore.getState().selectedChat, browsing)
+})
+
+test('a cold-start send lands in the selected chat, not a fresh one', async () => {
+  // Fresh launch: no engine yet. Selecting an existing chat and sending used to
+  // switch the session first and start pi after, and startPi applies the resume
+  // preference — so pi booted on a DIFFERENT session, the view jumped to it, and
+  // the prompt went somewhere the user was no longer looking. The session has to
+  // be bound at startup instead.
+  workspaceListResult = [WORKSPACE_ONE, WORKSPACE_TWO]
+  activeWorkspaceResult = WORKSPACE_ONE
+  useAppStore.setState({
+    activeWorkspace: WORKSPACE_ONE,
+    workspaces: [WORKSPACE_ONE, WORKSPACE_TWO],
+    piStatus: 'stopped',
+  })
+
+  await useAppStore.getState().openSessionItem(sessionItemFor(WORKSPACE_TWO))
+  calls.length = 0
+
+  await useAppStore.getState().sendPrompt('ship it')
+
+  const start = calls.find((c) => c.startsWith('pi.start:'))
+  assert.ok(start, 'the first send still spawns the agent')
+  assert.ok(
+    start.includes(SESSION_PATH),
+    `pi must be started ON the selected session, got: ${start}`
+  )
+  assert.equal(
+    calls.includes(`switch:${SESSION_PATH}`),
+    false,
+    'no session switch: there was no engine to switch, which is what caused the jump'
+  )
+  assert.equal(calls.some((c) => c.startsWith('prompt:')), true)
 })
 
 test('switching into a working workspace shows the indicator and marks the attach', async () => {
@@ -2035,6 +2095,16 @@ test('the activity map going quiet after an attach stops the indicator and backf
 test('selecting a mid-turn session row leaves the other runtime working', async () => {
   enterWorkspacesWithBackgroundTurn()
   sessionStateResult = sessionStateWith(SESSION_PATH)
+  // A live runtime in the target workspace, so activateWorkspace reports the
+  // engine as running and the commit takes the switch route. Without one the
+  // commit correctly cold-starts instead, and no runtime event follows to
+  // hydrate — a different (also correct) path this test is not about.
+  useAppStore.setState({
+    sessionRuntimes: {
+      'rt-live': runtimeIn(WORKSPACE_TWO, { runtimeId: 'rt-live', sessionPath: '/tmp/other-live.jsonl', status: 'running', active: true }),
+    },
+    activeSessionRuntimeId: 'rt-live',
+  })
   switchResult = {
     runtimeId: 'rt-opened',
     workspaceId: WORKSPACE_TWO.id,
@@ -2057,7 +2127,7 @@ test('selecting a mid-turn session row leaves the other runtime working', async 
   assert.equal(await useAppStore.getState().commitSelectedChat(), true)
 
   const state = useAppStore.getState()
-  assert.equal(calls.includes(`switch:${SESSION_PATH}`), true)
+  assert.equal(engineBoundTo(SESSION_PATH), true)
   assert.equal(state.sessionLoading, true, 'hydration defers until the runtime reports running')
   assert.equal(state.isStreaming, false, 'the selected session starts idle until its own events arrive')
 
@@ -2089,7 +2159,7 @@ test('opening a different session mid-turn does not prompt or stop the other run
   await useAppStore.getState().openSessionItem(sessionItemFor(WORKSPACE_TWO))
   assert.equal(await useAppStore.getState().commitSelectedChat(), true)
 
-  assert.equal(calls.includes(`switch:${SESSION_PATH}`), true)
+  assert.equal(engineBoundTo(SESSION_PATH), true)
   assert.equal(useAppStore.getState().reattachedMidTurn, false)
 })
 
@@ -2100,7 +2170,7 @@ test('a background runtime never blocks session navigation with a warning', asyn
   await useAppStore.getState().openSessionItem(sessionItemFor(WORKSPACE_TWO))
   assert.equal(await useAppStore.getState().commitSelectedChat(), true)
 
-  assert.equal(calls.includes(`switch:${SESSION_PATH}`), true)
+  assert.equal(engineBoundTo(SESSION_PATH), true)
   assert.equal(useAppStore.getState().confirmRequest, null)
 })
 

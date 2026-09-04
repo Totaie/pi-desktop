@@ -31,11 +31,46 @@ interface StreamingBubbleProps {
   >
 }
 
+/**
+ * What the wait is, and roughly how long it has left.
+ *
+ * The estimate is the machine's own measured prefill rate (see prefillRate in
+ * the store), not a constant — this box has run at both 28 and 1,437 tokens/sec
+ * depending on what else held the GPU, so any hardcoded number would be wrong
+ * most of the time. With no measurement yet it says the size and no ETA rather
+ * than inventing one.
+ */
+function describeWait(
+  piStatus: string,
+  startupPhase: string | null,
+  promptTokens: number | null,
+  prefillRate: number | null
+): string {
+  if (piStatus === 'starting') return startupPhase ? `Starting the agent — ${startupPhase}` : 'Starting the agent'
+  if (piStatus !== 'running') return 'Waiting for the agent'
+  if (!promptTokens) return 'Waiting for response'
+  const size = `${Math.round(promptTokens / 1000)}k tokens`
+  if (!prefillRate) return `Reading ${size} of context`
+  const seconds = Math.round(promptTokens / prefillRate)
+  if (seconds < 5) return `Reading ${size} of context`
+  const eta = seconds >= 60 ? `~${Math.round(seconds / 60)} min` : `~${seconds}s`
+  return `Reading ${size} of context — ${eta}`
+}
+
 export function StreamingBubble({ content, thinking, toolCalls }: StreamingBubbleProps): React.JSX.Element {
   const thinkingEnabled = useAppStore(
     (state) => state.settingsDraft.showThinking ?? state.settings?.showThinking ?? DEFAULT_SETTINGS.showThinking
   )
   const thinkingScrollRef = useRef<HTMLDivElement>(null)
+
+  // What this wait actually is. Context size comes from the last completed
+  // turn, which is the closest thing to the current prompt's size that exists
+  // before the model has answered.
+  const piStatus = useAppStore((state) => state.piStatus)
+  const startupPhase = useAppStore((state) => state.piStartupPhase)
+  const promptTokens = useAppStore((state) => state.sessionStats?.contextUsage?.tokens ?? null)
+  const prefillRate = useAppStore((state) => state.prefillRate)
+  const waitLabel = describeWait(piStatus, startupPhase, promptTokens, prefillRate)
 
   // Whether the thinking pane should keep following its tail. Sticky INTENT,
   // remembered across renders — not re-derived from scroll position on every
@@ -136,9 +171,12 @@ export function StreamingBubble({ content, thinking, toolCalls }: StreamingBubbl
           {!content && !thinking && toolCalls.size === 0 && (
             // The longest wait in the app: on a local model this is prompt
             // prefill, which can run for a minute before the first token. The
-            // elapsed counter is the whole reason this is not a spinner.
+            // elapsed counter is the whole reason this is not a spinner — and
+            // the label says which wait it is, because "starting the engine"
+            // and "reading 24k tokens of context" feel identical from here and
+            // have completely different fixes.
             <div className="flex h-7 items-center text-sm text-dim">
-              <PixelLoader label="Waiting for response" />
+              <PixelLoader label={waitLabel} />
             </div>
           )}
         </div>
