@@ -123,6 +123,42 @@ test('message_end for a non-assistant message adds no error message', () => {
 })
 
 // The timeline entry for a failed response must not claim success.
+// 'length' means two different ceilings. Only one of them is the output cap,
+// and only that one is worth telling the user about.
+test('a length stop that exhausted the output cap explains itself', () => {
+  useAppStore.getState().handlePiEvent({
+    type: 'message_end',
+    message: {
+      role: 'assistant',
+      content: [],
+      stopReason: 'length',
+      usage: { input: 40000, output: 39936 },
+    },
+  } as unknown as PiRpcEvent)
+
+  assert.equal(systemMessages().length, 1)
+  assert.match(systemMessages()[0], /output limit/)
+})
+
+test('a length stop a few hundred tokens in says nothing', () => {
+  // The context window filled, not the output budget: there was no room left
+  // to generate into, so the turn ended almost immediately and reported
+  // 'length' just the same. Pi compacts and continues by itself and says so,
+  // and three of these per overflow claiming a 40k budget was exhausted is
+  // noise that contradicts what the user can see happening.
+  useAppStore.getState().handlePiEvent({
+    type: 'message_end',
+    message: {
+      role: 'assistant',
+      content: [],
+      stopReason: 'length',
+      usage: { input: 99000, output: 173 },
+    },
+  } as unknown as PiRpcEvent)
+
+  assert.deepEqual(systemMessages(), [])
+})
+
 test('message_end with stopReason error records a failed timeline event', () => {
   useAppStore.getState().handlePiEvent({
     type: 'message_end',

@@ -1195,6 +1195,13 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     // this chat to become the live one, so do the switch that selecting it
     // deliberately skipped. Before the busy check, because that check is about
     // the engine we are about to move to.
+    //
+    // Captured BEFORE the commit clears it. switchSession binds a runtime that
+    // may still be spawning, which leaves piStatus at 'starting'/'stopped' — and
+    // the lazy start below would then fire bare, boot pi's resume preference,
+    // and land on a different session. That is the same jump the cold-start fix
+    // addressed, reached through the engine-was-running path instead.
+    const intendedSession = get().selectedChat?.sessionPath ?? null
     if (!(await get().commitSelectedChat())) return
 
     // One engine at a time. If a different project is mid-turn, starting here
@@ -1231,9 +1238,11 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
 
     // Navigation never spawns Pi; the first prompt does. startPi applies the
     // resume preference, so a previously-used project continues its last
-    // conversation; a fresh one gets a new session.
+    // conversation; a fresh one gets a new session — except when the user just
+    // named the session they want, in which case the resume preference is
+    // exactly the wrong answer and the session is bound explicitly.
     if (get().piStatus !== 'running') {
-      await get().startPi()
+      await get().startPi(intendedSession ? { sessionPath: intendedSession } : undefined)
       if (get().piStatus !== 'running') return
     }
 
@@ -3690,6 +3699,14 @@ const UNKNOWN_TURN_ERROR = 'Unknown error'
  * assistant message with stopReason 'error', empty content, and the provider
  * error in errorMessage — without this, the chat shows nothing at all.
  */
+/**
+ * Below this many output tokens, a 'length' stop is the context window filling
+ * up rather than the output cap being reached. Well under the smallest cap this
+ * stack configures (39,936) and well over the few hundred tokens an
+ * out-of-context turn manages.
+ */
+const CONTEXT_FULL_OUTPUT_CEILING = 4096
+
 function turnErrorText(message?: Record<string, unknown>): string | null {
   if (!message || message.role !== 'assistant') return null
   const errorMessage = typeof message.errorMessage === 'string' ? message.errorMessage : ''
@@ -3706,6 +3723,21 @@ function turnErrorText(message?: Record<string, unknown>): string | null {
   // Spelled defensively because the field is provider-shaped: OpenAI-style
   // backends report 'length', Anthropic-style 'max_tokens'.
   if (message.stopReason === 'length' || message.stopReason === 'max_tokens') {
+    // ...but 'length' covers two different ceilings, and only one of them is
+    // the output cap. When the CONTEXT window is full there is no room left to
+    // generate into, so the turn stops after a handful of tokens and reports
+    // 'length' just the same. Three consecutive 173-token turns each claiming
+    // to have exhausted a 40,000-token output budget is what that looks like,
+    // and the advice to raise maxTokens is then both wrong and useless: Pi
+    // compacts and carries on by itself, saying so in its own status line.
+    //
+    // Told apart by size, since the cap itself is not visible from here. The
+    // configured caps are 39,936 and up, so a turn ending this far below any
+    // of them did not reach one. A setup with a genuinely tiny maxTokens would
+    // be misread — the trade is a silent self-healing case against three false
+    // alarms per overflow.
+    const output = turnTokens(message)?.output
+    if (output !== undefined && output < CONTEXT_FULL_OUTPUT_CEILING) return null
     return (
       'The turn stopped at the output limit, not because it finished. ' +
       'Its work so far is above; say "continue" to pick up from there. ' +

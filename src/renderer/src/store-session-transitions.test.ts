@@ -1988,6 +1988,55 @@ test('a cold-start send lands in the selected chat, not a fresh one', async () =
   assert.equal(calls.some((c) => c.startsWith('prompt:')), true)
 })
 
+test('a send never bare-starts pi after committing a selection', async () => {
+  // The second shape of the same jump. Here an engine IS running, so the commit
+  // takes the switch route — but switchSession binds a runtime that is still
+  // spawning, which leaves piStatus not-running. The lazy start in sendPrompt
+  // then used to fire with no options, boot pi's resume preference, and land on
+  // a different session than the one the user sent from.
+  workspaceListResult = [WORKSPACE_ONE, WORKSPACE_TWO]
+  activeWorkspaceResult = WORKSPACE_ONE
+  switchResult = {
+    runtimeId: 'rt-spawning',
+    workspaceId: WORKSPACE_TWO.id,
+    sessionPath: SESSION_PATH,
+    sessionId: 'session-2',
+    // Still coming up: this is what leaves piStatus not-running after a switch.
+    status: 'stopped',
+    pid: null,
+    error: null,
+    activity: null,
+    active: true,
+  }
+  useAppStore.setState({
+    activeWorkspace: WORKSPACE_ONE,
+    workspaces: [WORKSPACE_ONE, WORKSPACE_TWO],
+    piStatus: 'running',
+    sessionRuntimes: {
+      // In the TARGET workspace, on a different session: that is what makes
+      // activateWorkspace report the engine as running, so the commit takes
+      // the switch route rather than the cold-start one.
+      'rt-other': runtimeIn(WORKSPACE_TWO, { runtimeId: 'rt-other', sessionPath: '/tmp/other-live.jsonl', status: 'running', active: true }),
+    },
+    activeSessionRuntimeId: 'rt-other',
+  })
+
+  await useAppStore.getState().openSessionItem(sessionItemFor(WORKSPACE_TWO))
+  calls.length = 0
+
+  await useAppStore.getState().sendPrompt('ship it')
+
+  assert.equal(
+    calls.includes('pi.start'),
+    false,
+    'a bare start would boot the resume preference, which is a different session'
+  )
+  assert.ok(
+    calls.some((c) => c === `pi.start:${SESSION_PATH}`) || calls.includes(`switch:${SESSION_PATH}`),
+    'the engine must end up on the session the user sent from'
+  )
+})
+
 test('switching into a working workspace shows the indicator and marks the attach', async () => {
   enterWorkspacesWithBackgroundTurn()
 
