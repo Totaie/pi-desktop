@@ -4,6 +4,7 @@ import { basename, join, resolve as resolvePath } from 'path'
 import { isTrustedRendererUrl, RENDERER_INDEX_PATH } from './renderer-origin'
 import { workspaceTrustStore } from './workspace-trust'
 import { WorkspaceManager } from './workspace-manager'
+import { spawn } from 'child_process'
 import { registerIpcHandlers, loadAppSettings, saveAppSettings } from './ipc-handlers'
 import { setPiExecutableOverride, cleanupPiChildTempDir } from './pi-rpc-manager'
 import { fetchAllCatalogPackages } from './package-catalog'
@@ -419,6 +420,9 @@ app.whenReady().then(async () => {
   // binary before this setting is applied.
   const settings = await loadAppSettings(workspaceManager)
   setPiExecutableOverride(settings.piExecutablePath, settings.piEngine)
+  // Cached because before-quit cannot await, and reading settings off disk
+  // during shutdown is exactly when the read is least likely to finish.
+  shutdownCommand = settings.shutdownCommand ?? ''
 
   // Register IPC handlers before creating windows. The window getter is a
   // lazy closure — mainWindow is created later and the notification wiring
@@ -502,9 +506,40 @@ app.on('before-quit', (event) => {
   activityStatsStore.flushSync()
   appLog.flushSync()
   workspaceManager?.stopAll()
+  runShutdownCommand()
   // Windows: GUI-owned Pi TEMP does not get OS cleanup — wipe on quit.
   cleanupPiChildTempDir()
 })
+
+/**
+ * Run the configured shutdown command, detached, and do not wait for it.
+ *
+ * Detached on purpose. This runs inside before-quit, and the work is killing
+ * processes — which takes seconds and cannot be allowed to hold the window
+ * open. Detaching means it outlives the app just long enough to finish, which
+ * is exactly what stopping a server the app does not own requires.
+ *
+ * Failures are logged and swallowed: a quit that refuses to complete because a
+ * cleanup script is missing is a worse bug than the cleanup not happening.
+ */
+let shutdownCommand = ''
+
+function runShutdownCommand(): void {
+  try {
+    const command = shutdownCommand.trim()
+    if (!command) return
+    appLog.info('shutdown', 'running shutdown command')
+    const child = spawn(command, {
+      shell: true,
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+    child.unref()
+  } catch (err) {
+    appLog.warn('shutdown', `shutdown command failed: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
 
 // Security: prevent new window creation, and stop preview <webview> guests from
 // navigating away from their local file (e.g. a malicious HTML file redirecting

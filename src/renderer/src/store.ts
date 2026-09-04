@@ -105,10 +105,24 @@ export interface ConfirmOptions {
   cancelLabel?: string
   // Style the confirm button as destructive (red).
   danger?: boolean
+  /**
+   * A third, non-destructive way out, shown first because it is usually the
+   * right one. Resolves 'alt' rather than a boolean, so callers that never set
+   * it keep their yes/no shape untouched.
+   */
+  altLabel?: string
+  /**
+   * The chat this question belongs to. A modal raised by one chat must not
+   * follow the user into another — they did not ask it there, and answering it
+   * from the wrong chat answers about a send they cannot see.
+   */
+  sessionRuntimeId?: string | null
 }
 
+export type ConfirmAnswer = boolean | 'alt'
+
 export interface ConfirmRequest extends ConfirmOptions {
-  resolve: (confirmed: boolean) => void
+  resolve: (answer: ConfirmAnswer) => void
 }
 
 /** The actions that abandon the live turn, either by replacing the session or by leaving it. */
@@ -354,6 +368,17 @@ interface AppState {
   turnStartedAt: number | null
   /** Tokens/sec, smoothed across turns. Null until one has been observed. */
   prefillRate: number | null
+  /**
+   * Live generation speed for the turn on screen.
+   *
+   * `streamTokens` counts streamed deltas since the first one: llama.cpp's
+   * OpenAI-compatible stream emits one delta per token, so the count is the
+   * token count rather than an estimate from characters. `firstTokenAt` is
+   * when generation actually began, which is not when the turn was sent — the
+   * prefill in between would otherwise drag the rate down for the whole turn.
+   */
+  streamTokens: number
+  firstTokenAt: number | null
   forkMessages: ForkPoint[]
 
   // Messages
@@ -650,10 +675,12 @@ interface AppActions {
   // App confirmation dialog (promise-based; resolves true on confirm)
   /** Whether the remote-access (QR) panel is showing. */
   remotePanelOpen: boolean
+  /** Newest `remotepi://pair?...` seen in chat; the only payload a phone can pair with. */
+  remotePairingUri: string | null
   setRemotePanelOpen: (open: boolean) => void
 
-  requestConfirm: (options: ConfirmOptions) => Promise<boolean>
-  resolveConfirm: (confirmed: boolean) => void
+  requestConfirm: (options: ConfirmOptions) => Promise<ConfirmAnswer>
+  resolveConfirm: (answer: ConfirmAnswer) => void
 
   // Shows the one-time "this workspace has its own permission rules" notice
   // and records the acknowledgment in settings.
@@ -957,6 +984,14 @@ function nextSelectedChat(
   return current.selectedChat
 }
 
+/**
+ * The pairing URI remote-pi prints into the chat. Deliberately narrow: it is
+ * matched against arbitrary model output, so it stops at the first character
+ * that cannot appear in a query string rather than swallowing the rest of a
+ * sentence.
+ */
+const PAIRING_URI = /remotepi:\/\/pair\?[A-Za-z0-9_\-=&%.~+]+/
+
 const PARSE_CHUNK = 50
 
 /** Parse history in chunks, yielding to the event loop so the UI can paint. */
@@ -1055,7 +1090,10 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
   selectedChat: null,
   turnStartedAt: null,
   prefillRate: null,
+  streamTokens: 0,
+  firstTokenAt: null,
   remotePanelOpen: false,
+  remotePairingUri: null,
   activeSessionRuntimeId: null,
   forkMessages: [],
 
@@ -1190,6 +1228,17 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
   addMessage: (message) =>
     set((state) => ({
       messages: [...state.messages, message],
+      // remote-pi renders its pairing URI into the chat (pi.sendMessage), and
+      // that URI is the only thing the phone can actually pair against: it
+      // carries the single-use token, the Ed25519 identity and the room, none
+      // of which the desktop can mint. Catching it here is what lets the QR
+      // show the real thing instead of a bare relay URL the app cannot use.
+      ...(typeof message.content === 'string'
+        ? (() => {
+            const found = message.content.match(PAIRING_URI)
+            return found ? { remotePairingUri: found[0] } : {}
+          })()
+        : {}),
     })),
 
   setMessages: (messages) => set({ messages }),
@@ -1238,10 +1287,10 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     const intendedSession = get().selectedChat?.sessionPath ?? null
     if (!(await get().commitSelectedChat())) return
 
-    // One engine at a time. If a different project is mid-turn, starting here
-    // would quietly run a second Pi against a single-slot local server, so the
-    // user decides: stop that turn, or stay put. Checked before startPi()
-    // because that is the call that would spawn the second process.
+    // One engine at a time. If another chat is mid-turn, starting here would
+    // quietly run a second Pi against a single-slot local server, so the user
+    // decides. Checked before startPi() because that is the call that would
+    // spawn the second process.
     const busy = findBusyForeignRuntime(
       get().sessionRuntimes,
       get().activeSessionRuntimeId,
@@ -1249,16 +1298,25 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     )
     if (busy) {
       const label = workspaceLabel(get().workspaces, busy.workspaceId)
-      const stopIt = await get().requestConfirm({
-        title: 'Pi is still working',
+      const answer = await get().requestConfirm({
+        title: 'Still working in another chat',
         message: busy.activity === 'needs-approval'
-          ? `Pi is waiting for approval in ${label}. Only one project runs at a time — stop that turn and continue here?`
-          : `Pi is still responding in ${label}. Only one project runs at a time — stop that turn and continue here?`,
-        confirmLabel: 'Stop it and send',
-        cancelLabel: 'Stay there',
+          ? `Pi is waiting for approval in ${label}. Only one chat runs at a time.`
+          : `Pi is still responding in ${label}. Only one chat runs at a time.`,
+        // Offered first because it is almost always what was meant: the user
+        // wants to see the answer they are already waiting on, not to throw it
+        // away. Sending here remains available and remains destructive.
+        altLabel: 'Go to that chat',
+        confirmLabel: 'Send here anyway',
+        cancelLabel: 'Cancel',
         danger: true,
+        sessionRuntimeId: get().activeSessionRuntimeId,
       })
-      if (!stopIt) return
+      if (answer === 'alt') {
+        await get().openChat(busy.runtimeId)
+        return
+      }
+      if (!answer) return
       try {
         await window.piDesktop.session.abortRuntime(busy.runtimeId)
         // Let the abort land before spawning here, so the hand-off is a swap
@@ -1306,6 +1364,8 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
       streamingThinking: '',
       streamingToolCalls: new Map(),
       turnStartedAt: Date.now(),
+      streamTokens: 0,
+      firstTokenAt: null,
     })
 
     try {
@@ -1496,7 +1556,8 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
   confirmSessionChange: async (action) => {
     if (!get().isStreaming) return true
     const { message, confirmLabel } = SESSION_CHANGE_PROMPTS[action]
-    return get().requestConfirm({
+    // No altLabel here, so the answer is only ever a boolean.
+    return (await get().requestConfirm({
       title: 'Pi is still working',
       message,
       confirmLabel,
@@ -1504,7 +1565,7 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
       // Discards work in progress, so the confirm button reads as destructive and
       // "Keep working" takes the initial focus.
       danger: true,
-    })
+    })) === true
   },
 
   // ─── Session ──────────────────────────────────────────────────────────
@@ -2780,7 +2841,7 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
   setRemotePanelOpen: (open) => set({ remotePanelOpen: open }),
 
   requestConfirm: (options) =>
-    new Promise<boolean>((resolve) => {
+    new Promise<ConfirmAnswer>((resolve) => {
       // Resolve any dialog already open (treated as cancelled) before showing.
       const pending = get().confirmRequest
       if (pending) pending.resolve(false)
@@ -3388,13 +3449,14 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
   confirmDiscardEditorChanges: async () => {
     if (!get().editorDirty) return true
     const name = get().previewTarget?.name
-    return get().requestConfirm({
+    // No altLabel here, so the answer is only ever a boolean.
+    return (await get().requestConfirm({
       title: 'Unsaved changes',
       message: name ? `Discard unsaved changes to ${name}?` : 'Discard unsaved changes?',
       confirmLabel: 'Discard changes',
       cancelLabel: 'Keep editing',
       danger: true,
-    })
+    })) === true
   },
 
   toggleFileSearch: () => {
@@ -3655,14 +3717,20 @@ type ZustandSet = (partial: Partial<AppState> | ((state: AppState) => Partial<Ap
  */
 function recordPrefill(set: ZustandSet): void {
   set((state) => {
-    if (!state.turnStartedAt) return {}
+    // Every delta lands here, so this is also where the live token count grows.
+    const counted = {
+      streamTokens: state.streamTokens + 1,
+      firstTokenAt: state.firstTokenAt ?? Date.now(),
+    }
+    if (!state.turnStartedAt) return counted
     const seconds = (Date.now() - state.turnStartedAt) / 1000
     const tokens = state.sessionStats?.contextUsage?.tokens ?? 0
     // Under a second, or with no idea of the prompt size, there is nothing to
     // learn — just close the window so the rest of the turn is not measured.
-    if (seconds < 1 || tokens <= 0) return { turnStartedAt: null }
+    if (seconds < 1 || tokens <= 0) return { ...counted, turnStartedAt: null }
     const observed = tokens / seconds
     return {
+      ...counted,
       turnStartedAt: null,
       prefillRate: state.prefillRate ? state.prefillRate * 0.7 + observed * 0.3 : observed,
     }

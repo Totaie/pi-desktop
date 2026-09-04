@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { MarkdownRenderer } from './markdown-renderer'
 import { toolLabel } from '../message-grouping'
 import { toolCallIconFor } from './tool-call-icon'
@@ -71,6 +71,21 @@ export function StreamingBubble({ content, thinking, toolCalls }: StreamingBubbl
   const promptTokens = useAppStore((state) => state.sessionStats?.contextUsage?.tokens ?? null)
   const prefillRate = useAppStore((state) => state.prefillRate)
   const waitLabel = describeWait(piStatus, startupPhase, promptTokens, prefillRate)
+
+  // Live generation speed. Deltas are counted rather than characters because
+  // llama.cpp's stream emits one per token, and timed from the FIRST one so a
+  // minute of prefill does not get averaged into the rate the user is watching.
+  const streamTokens = useAppStore((state) => state.streamTokens)
+  const firstTokenAt = useAppStore((state) => state.firstTokenAt)
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!firstTokenAt) return
+    const id = setInterval(() => setNow(Date.now()), 500)
+    return () => clearInterval(id)
+  }, [firstTokenAt])
+  const elapsed = firstTokenAt ? (now - firstTokenAt) / 1000 : 0
+  // Under a second of samples the number swings wildly and says nothing.
+  const tokensPerSecond = firstTokenAt && elapsed >= 1 ? streamTokens / elapsed : null
 
   // Whether the thinking pane should keep following its tail. Sticky INTENT,
   // remembered across renders — not re-derived from scroll position on every
@@ -157,6 +172,12 @@ export function StreamingBubble({ content, thinking, toolCalls }: StreamingBubbl
                   </div>
                 )
               })}
+            </div>
+          )}
+
+          {tokensPerSecond !== null && (
+            <div className="mb-1 font-jetbrains text-[11px] text-faint">
+              {tokensPerSecond.toFixed(1)} tok/s
             </div>
           )}
 

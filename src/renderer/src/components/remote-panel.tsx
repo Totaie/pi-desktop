@@ -58,17 +58,31 @@ export function RemotePanel(): React.JSX.Element | null {
   // dead tunnel is worse than none: it fails on the phone, away from the
   // machine that could explain why.
   const url = status.tunnel.url
+  // The only payload a phone can pair with. It carries a single-use token, the
+  // Ed25519 identity and the room id, all of which are minted by the LIVE pi
+  // session — the desktop cannot produce any of them, which is why the QR used
+  // to encode the tunnel URL and silently fail to pair. remote-pi prints this
+  // into the chat; the store catches it there.
+  const pairingUri = useAppStore((state) => state.remotePairingUri)
+  const sendPrompt = useAppStore((state) => state.sendPrompt)
   useEffect(() => {
     let cancelled = false
-    if (!url) {
+    if (!url && !pairingUri) {
       setQr(null)
       return
     }
-    void QRCode.toDataURL(url, { margin: 1, width: 232, errorCorrectionLevel: 'M' })
+    // Only the pairing URI is worth a QR; the relay address is shown as text
+    // because scanning it does nothing (see the panel below).
+    const encode = pairingUri
+    if (!encode) {
+      setQr(null)
+      return
+    }
+    void QRCode.toDataURL(encode, { margin: 1, width: 232, errorCorrectionLevel: 'M' })
       .then((data) => { if (!cancelled) setQr(data) })
       .catch(() => { if (!cancelled) setQr(null) })
     return () => { cancelled = true }
-  }, [url])
+  }, [url, pairingUri])
 
   const start = useCallback(async () => {
     setBusy(true)
@@ -132,11 +146,38 @@ export function RemotePanel(): React.JSX.Element | null {
             />
           </label>
 
-          {live && qr && (
+          {live && (
             <div className="flex flex-col items-center gap-2 rounded-md border border-border bg-card p-3">
-              <img src={qr} alt="QR code for the remote relay URL" className="rounded" width={232} height={232} />
-              <code className="break-all text-center text-[11px] text-muted">{url}</code>
-              <span className="text-[11px] text-faint">Scan with the Remote Pi app</span>
+              {pairingUri && qr ? (
+                <>
+                  <img src={qr} alt="Pairing QR code" className="rounded" width={232} height={232} />
+                  <code className="break-all text-center text-[11px] text-muted">{pairingUri}</code>
+                  <span className="text-[11px] text-faint">
+                    Scan with the Remote Pi app. Single-use, and it expires — press
+                    Pair again for a fresh one.
+                  </span>
+                </>
+              ) : (
+                <>
+                  {/* Deliberately NOT a QR of the relay URL. The app pairs on a
+                      token it can only get from the running agent, so a QR of
+                      this address scans fine and then does nothing — which is
+                      exactly the failure this panel used to ship. The address
+                      still matters: it is what the phone is configured with. */}
+                  <code className="break-all text-center text-[11px] text-muted">{url}</code>
+                  <span className="text-center text-[11px] text-faint">
+                    Relay address for the app&apos;s settings. Pairing needs a code from
+                    the agent itself:
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void sendPrompt('/remote-pi pair')}
+                    className="rounded-md bg-accent px-3 py-1.5 text-xs text-white transition-colors hover:bg-accent-hover"
+                  >
+                    Pair a phone
+                  </button>
+                </>
+              )}
             </div>
           )}
 

@@ -27,6 +27,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   collapsedSessionGroups: [],
   sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
   openToHomeOnLaunch: true,
+  // Empty by default: an app that kills a server it did not start, on a machine
+  // whose owner never asked, is worse than one that leaves it running.
+  shutdownCommand: '',
   runOnStartup: false,
   minimizeToTrayOnClose: false,
   hasSeenTrayHint: false,

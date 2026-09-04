@@ -1185,6 +1185,18 @@ export interface AppSettings {
   // instead of booting straight into Chat. When false, boot into Chat (empty
   // chat is the Codex-style center prompt with project picker).
   openToHomeOnLaunch: boolean
+  /**
+   * Shell command run once on quit, detached, to shut down whatever serves the
+   * models. The agent's own processes die with the app — stopAll() stops every
+   * Pi manager, and their extensions and skills are children of those — but the
+   * inference server is not the app's child and would otherwise keep its
+   * weights resident after the last window closes.
+   *
+   * A command rather than a flag because the server is not part of this app:
+   * it is a scheduled task here, could be anything elsewhere, and hardcoding
+   * one machine's path into a shipped binary is how that stops working.
+   */
+  shutdownCommand: string
   // Launch Pi Desktop automatically when the user logs in to their computer.
   // Applied at the OS level: login items on macOS/Windows, a freedesktop
   // autostart entry on Linux. Only effective in packaged builds.

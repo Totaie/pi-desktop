@@ -280,6 +280,10 @@ function EditorDialog({
 export function AppConfirmDialog(): React.JSX.Element | null {
   const request = useAppStore((state) => state.confirmRequest)
   const resolveConfirm = useAppStore((state) => state.resolveConfirm)
+  // What is on screen, which during a preview leads the engine.
+  const shownRuntimeId = useAppStore(
+    (state) => state.selectedChat?.runtimeId ?? state.activeSessionRuntimeId
+  )
 
   useEffect(() => {
     if (!request) return
@@ -294,6 +298,11 @@ export function AppConfirmDialog(): React.JSX.Element | null {
   }, [request, resolveConfirm])
 
   if (!request) return null
+  // A question raised by one chat stays in that chat. Switching away while it
+  // is open must not carry it along: the user did not ask it there, and
+  // answering from the wrong chat answers about a send they cannot see. The
+  // request stays pending and reappears on the way back.
+  if (request.sessionRuntimeId && request.sessionRuntimeId !== shownRuntimeId) return null
 
   return (
     <DialogOverlay onCancel={() => resolveConfirm(false)}>
@@ -302,21 +311,33 @@ export function AppConfirmDialog(): React.JSX.Element | null {
         <div className="flex justify-end gap-2">
           <button
             onClick={() => resolveConfirm(false)}
-            autoFocus={request.danger}
             className="rounded-md border border-border-strong px-4 py-2 text-sm text-muted hover:bg-surface-hover transition-colors"
           >
             {request.cancelLabel ?? 'Cancel'}
           </button>
           <button
             onClick={() => resolveConfirm(true)}
-            autoFocus={!request.danger}
+            autoFocus={!request.danger && !request.altLabel}
             className={clsx(
-              'rounded-md px-4 py-2 text-sm text-white transition-colors',
-              request.danger ? 'bg-error hover:bg-error-hover' : 'bg-accent hover:bg-accent-hover'
+              'rounded-md px-4 py-2 text-sm transition-colors',
+              request.danger
+                ? 'border border-error text-error hover:bg-error-bg'
+                : 'bg-accent text-white hover:bg-accent-hover'
             )}
           >
             {request.confirmLabel ?? 'Confirm'}
           </button>
+          {/* Last in the row and focused: the safe way out is the default, and
+              the destructive one has to be reached for. */}
+          {request.altLabel && (
+            <button
+              onClick={() => resolveConfirm('alt')}
+              autoFocus
+              className="rounded-md bg-accent px-4 py-2 text-sm text-white transition-colors hover:bg-accent-hover"
+            >
+              {request.altLabel}
+            </button>
+          )}
         </div>
       </DialogBox>
     </DialogOverlay>
