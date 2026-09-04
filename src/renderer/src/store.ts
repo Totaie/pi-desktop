@@ -270,6 +270,35 @@ async function waitForRuntimeIdle(
   }
 }
 
+/**
+ * Wait for a runtime the main process is already spawning to report running.
+ *
+ * SESSION_SWITCH does not just bind a session, it starts the engine for it
+ * (activateSession -> startRuntime) and returns before that finishes. So a
+ * switch legitimately leaves piStatus at 'stopped' for a moment, and anything
+ * that reads that as "no engine, start one" races main and spawns a SECOND
+ * engine for the same workspace — which, under one-runtime-at-a-time, evicts
+ * the runtime the switch just bound. Waiting is the whole job.
+ *
+ * Resolves true once running, false on timeout or if the runtime disappears,
+ * so the caller can fall back rather than hang on a spawn that never lands.
+ */
+async function waitForRuntimeRunning(
+  read: () => Record<string, SessionRuntimeInfo>,
+  runtimeId: string,
+  timeoutMs = 60_000
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const runtime = read()[runtimeId]
+    if (!runtime) return false
+    if (runtime.status === 'running') return true
+    if (runtime.status === 'error') return false
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  return false
+}
+
 // ─── Store Shape ─────────────────────────────────────────────────────────────
 
 /**
@@ -1948,6 +1977,19 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
         // the turn's own session re-attaches instead of switching, and opening
         // a different session of a mid-turn workspace warns first.
         await get().switchSession(selected.sessionPath, cwd)
+        // Main spawns the engine for the session it just bound and returns
+        // without waiting, so piStatus is legitimately not-running here for a
+        // moment. Wait for main's own runtime rather than starting one: a
+        // second engine for this workspace evicts the one just bound, and the
+        // user lands in whatever survives — the wrong-chat jump, third shape.
+        const boundId = get().activeSessionRuntimeId
+        if (boundId && (await waitForRuntimeRunning(() => get().sessionRuntimes, boundId))) {
+          // Adopt the runtime's own status. switchSession recorded the status
+          // the switch RETURNED (still spawning), and leaving that stale is
+          // what makes the lazy start below fire at all.
+          const bound = get().sessionRuntimes[boundId]
+          if (bound) set({ piStatus: bound.status, piPid: bound.pid, piError: bound.error })
+        }
       } else {
         // Nothing to switch — there is no engine yet. Switching first and
         // starting after is the bug: startPi applies the resume preference and

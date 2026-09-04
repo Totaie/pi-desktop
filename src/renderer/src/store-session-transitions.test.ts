@@ -2037,6 +2037,59 @@ test('a send never bare-starts pi after committing a selection', async () => {
   )
 })
 
+test('a send waits for the runtime the switch bound instead of starting another', async () => {
+  // Third shape of the wrong-chat jump, and the one the first two fixes missed.
+  // SESSION_SWITCH does not only bind a session — main also spawns the engine
+  // for it and returns before that finishes, so piStatus is legitimately
+  // not-running for a moment afterwards. Treating that as "no engine, start
+  // one" spawns a SECOND engine for the workspace, and under
+  // one-runtime-at-a-time the runtime the switch just bound is the one evicted.
+  workspaceListResult = [WORKSPACE_ONE, WORKSPACE_TWO]
+  activeWorkspaceResult = WORKSPACE_ONE
+  switchResult = {
+    runtimeId: 'rt-target',
+    workspaceId: WORKSPACE_TWO.id,
+    sessionPath: SESSION_PATH,
+    sessionId: 'session-2',
+    // What main returns while it is still bringing the engine up.
+    status: 'stopped',
+    pid: null,
+    error: null,
+    activity: null,
+    active: true,
+  }
+  useAppStore.setState({
+    activeWorkspace: WORKSPACE_ONE,
+    workspaces: [WORKSPACE_ONE, WORKSPACE_TWO],
+    piStatus: 'running',
+    sessionRuntimes: {
+      // Live in the TARGET workspace, so the commit takes the switch route.
+      'rt-other': runtimeIn(WORKSPACE_TWO, { runtimeId: 'rt-other', sessionPath: '/tmp/other-live.jsonl', status: 'running', active: true }),
+    },
+    activeSessionRuntimeId: 'rt-other',
+  })
+
+  await useAppStore.getState().openSessionItem(sessionItemFor(WORKSPACE_TWO))
+  calls.length = 0
+
+  const sending = useAppStore.getState().sendPrompt('ship it')
+
+  // Main finishes the spawn it had already started.
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  useAppStore.getState().handleSessionRuntime(
+    runtimeIn(WORKSPACE_TWO, { runtimeId: 'rt-target', sessionPath: SESSION_PATH, status: 'running', pid: 9, active: true })
+  )
+  await sending
+
+  assert.equal(
+    calls.some((c) => c.startsWith('pi.start')),
+    false,
+    'main was already starting this runtime; a second engine evicts it'
+  )
+  assert.equal(calls.some((c) => c.startsWith('prompt:')), true, 'the prompt still goes out')
+  assert.equal(useAppStore.getState().activeSessionRuntimeId, 'rt-target')
+})
+
 test('switching into a working workspace shows the indicator and marks the attach', async () => {
   enterWorkspacesWithBackgroundTurn()
 
