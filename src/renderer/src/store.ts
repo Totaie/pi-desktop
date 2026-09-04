@@ -575,6 +575,11 @@ interface AppActions {
    */
   restoreLiveTranscript: (sessionPath: string | null) => Promise<void>
   /**
+   * Put the streaming state back if the chat now on screen is still mid-turn.
+   * Call AFTER any reload, which clears per-turn state.
+   */
+  rearmIfStillWorking: () => void
+  /**
    * Make the selected chat the live one: activate (or create) its workspace
    * and switch the engine to its session. This is the work selection
    * deliberately skips, done at the moment the user actually asks for that
@@ -1927,9 +1932,30 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     if (get().isStreaming) return
     if (get().piStatus === 'running') {
       await get().reloadActiveSession({ refreshList: false })
+      get().rearmIfStillWorking()
       return
     }
     await get().previewSessionHistory(sessionPath)
+    get().rearmIfStillWorking()
+  },
+
+  rearmIfStillWorking: () => {
+    // The chat being returned to may still be mid-turn. Previewing another one
+    // cleared the streaming state on the way out (clearMessages ->
+    // idleTurnState), and the reload only brings back what is committed to
+    // disk — not the turn in flight. Without this the transcript looks
+    // finished while the sidebar dot is visibly still spinning, which reads as
+    // the agent having died.
+    //
+    // Armed from the runtime's own activity, the same signal switchWorkspace
+    // and switchSession use, and AFTER the reload for the same reason they do:
+    // the reload's clearMessages() resets every per-turn field, so arming
+    // first would set both flags only to have them wiped.
+    const activeId = get().activeSessionRuntimeId
+    const activity = activeId ? get().sessionRuntimes[activeId]?.activity : undefined
+    if (activity === 'working' || activity === 'needs-approval') {
+      set({ isStreaming: true, reattachedMidTurn: true })
+    }
   },
 
   commitSelectedChat: async () => {

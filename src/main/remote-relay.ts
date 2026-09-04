@@ -44,6 +44,8 @@ export const DEFAULT_RELAY_PORT = 3000
 
 export class RemoteRelay extends EventEmitter {
   private child: ChildProcess | null = null
+  /** True when the running relay is one we found, not one we spawned. */
+  private adopted = false
   private status: RemoteRelayStatus = { state: 'stopped', port: null, error: null }
 
   getStatus(): RemoteRelayStatus {
@@ -68,6 +70,22 @@ export class RemoteRelay extends EventEmitter {
    * at nothing.
    */
   async start(port = DEFAULT_RELAY_PORT, binaryPath?: string, timeoutMs = 20_000): Promise<RemoteRelayStatus> {
+    // Adopt a relay already serving this port rather than fighting it.
+    //
+    // One outlives an app that was killed rather than quit — repackaging over a
+    // running build does exactly that — and every start after that raced its
+    // own spawn: the new process exits immediately on the taken port, its exit
+    // handler beats the health poll to setStatus, and start() returns
+    // 'stopped'. REMOTE_START then bails before the tunnel, so the button
+    // looked like it did nothing at all. The orphan is a working relay on the
+    // port we wanted, so the correct move is to use it.
+    if (await healthy(port)) {
+      appLog.info('remote', `Adopting a relay already serving 127.0.0.1:${port}`)
+      this.adopted = true
+      this.setStatus({ state: 'running', port, error: null })
+      return this.getStatus()
+    }
+    this.adopted = false
     if (this.child) return this.getStatus()
 
     const bin = resolveRelayPath(binaryPath)
@@ -134,9 +152,14 @@ export class RemoteRelay extends EventEmitter {
     child.on('exit', (code) => {
       if (this.child !== child) return
       this.child = null
+      // Named, not just numbered. The overwhelmingly common cause is the port
+      // being held by something that is not a relay, and "exited with code 1"
+      // sends nobody anywhere useful.
       this.setStatus({
         state: 'stopped',
-        error: code === 0 ? null : `relay exited with code ${code}`,
+        error: code === 0
+          ? null
+          : `relay exited with code ${code} — port ${port} may be in use by another program`,
       })
     })
 
@@ -162,6 +185,11 @@ export class RemoteRelay extends EventEmitter {
   stop(): void {
     const child = this.child
     if (!child) {
+      // An adopted relay belongs to another process; killing something by port
+      // is not this class's call. Stopping the tunnel is what actually closes
+      // the outside route, and the relay stays loopback-only either way.
+      if (this.adopted) appLog.info('remote', 'Leaving the adopted relay running; it is not ours to stop')
+      this.adopted = false
       this.setStatus({ state: 'stopped', error: null })
       return
     }

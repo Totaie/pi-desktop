@@ -2090,6 +2090,43 @@ test('a send waits for the runtime the switch bound instead of starting another'
   assert.equal(useAppStore.getState().activeSessionRuntimeId, 'rt-target')
 })
 
+test('coming back to a chat that is still mid-turn shows it as still working', async () => {
+  // Browse away from a streaming chat and back. The preview clears the
+  // streaming state on its way out (clearMessages -> idleTurnState) and the
+  // reload only restores what is committed to disk, so the transcript came
+  // back looking finished while the sidebar dot was visibly still spinning.
+  const OTHER = '/tmp/browsed-away.jsonl'
+  workspaceListResult = [WORKSPACE_ONE, WORKSPACE_TWO]
+  activeWorkspaceResult = WORKSPACE_ONE
+  useAppStore.setState({
+    activeWorkspace: WORKSPACE_ONE,
+    workspaces: [WORKSPACE_ONE, WORKSPACE_TWO],
+    piStatus: 'running',
+    sessionState: sessionStateWith(SESSION_PATH),
+    // The live chat's engine, still working on its turn.
+    sessionRuntimes: {
+      'rt-live': runtimeIn(WORKSPACE_ONE, { runtimeId: 'rt-live', sessionPath: SESSION_PATH, status: 'running', activity: 'working', active: true }),
+    },
+    activeSessionRuntimeId: 'rt-live',
+    isStreaming: true,
+  })
+
+  // Away: the preview takes the streaming state down with it.
+  await useAppStore.getState().openSessionItem({ ...sessionItemFor(WORKSPACE_TWO), path: OTHER })
+  assert.equal(useAppStore.getState().isStreaming, false, 'a preview is not the live turn')
+
+  // Back.
+  await useAppStore.getState().openSessionItem(sessionItemFor(WORKSPACE_ONE))
+
+  assert.equal(useAppStore.getState().selectedChat, null, 'this is the live chat again')
+  assert.equal(
+    useAppStore.getState().isStreaming,
+    true,
+    'the engine is still working, so the chat must not look finished'
+  )
+  assert.equal(useAppStore.getState().reattachedMidTurn, true, 'and the backfill must be armed')
+})
+
 test('switching into a working workspace shows the indicator and marks the attach', async () => {
   enterWorkspacesWithBackgroundTurn()
 
