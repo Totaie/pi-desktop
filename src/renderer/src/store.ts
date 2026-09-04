@@ -1808,6 +1808,10 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     // Bring the chat into view (may be on Settings/Notes/etc.). In-app
     // switches keep their remembered scroll position, so no force-to-bottom.
     get().setCurrentView('chat')
+    // Re-read the list on the way in: switching chats is when the sidebar is
+    // actually being looked at, and a chat that became listable since the last
+    // refresh should not have to wait for an unrelated event to show up.
+    scheduleSessionListRefresh(get)
 
     const runtime = Object.values(get().sessionRuntimes).find(
       (item) => item.sessionPath && pathsEqual(item.sessionPath, session.path)
@@ -2372,6 +2376,12 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
         break
 
       case 'agent_end':
+        // The turn just wrote content. Until it did, a brand-new session was
+        // header-only, and listSessions deliberately hides those (and prunes
+        // their runtimes) — so a new chat had no row anywhere, and clicking
+        // away from it lost the synthesized active-session row that was the
+        // only thing representing it. This is the moment it becomes listable.
+        scheduleSessionListRefresh(get)
         set((state) => ({
           isStreaming: false,
           // Close out the matching 'Agent started processing' entry so its
@@ -2770,6 +2780,7 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     const runtime = get().sessionRuntimes[runtimeId]
     if (!runtime) return
     get().setCurrentView('chat')
+    scheduleSessionListRefresh(get)
 
     // Whether another chat's transcript is currently borrowed into the view.
     const previewing = get().selectedChat !== null
